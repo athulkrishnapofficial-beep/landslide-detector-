@@ -28,7 +28,7 @@ function App() {
         setLoading(true);
         setResult(null);
         try {
-            const response = await axios.post('http://127.0.0.1:5000/predict', {
+            const response = await axios.post('https://landslide-detector-backend.vercel.app/predict', {
                 lat: latlng.lat,
                 lng: latlng.lng
             });
