@@ -76,86 +76,120 @@ const calculateSlope = async (lat, lon) => {
     }
 };
 
-// --- 2. ADVANCED PHYSICS ENGINE ---
+// ... existing imports and fetch functions remain the same ...
+
+// --- 2. ADVANCED PHYSICS ENGINE & REASONING ---
 
 const calculateLandslideRisk = (features) => {
     const { rain, slope, clay, sand, silt, bulk_density } = features;
 
+    // --- A. GEOTECH PARAMETERS ---
+    // Normalize percentages
     const fClay = clay / 100;
     const fSand = sand / 100;
     const fSilt = silt / 100;
 
-    let c = (fClay * 35) + (fSilt * 10) + (fSand * 1);
-    let phi = (fSand * 34) + (fSilt * 28) + (fClay * 18);
+    // 1. Cohesion (c) & Friction (phi)
+    // We use weighted averages based on soil composition
+    let c = (fClay * 35) + (fSilt * 10) + (fSand * 1); 
+    let phi = (fSand * 34) + (fSilt * 28) + (fClay * 20); 
 
-    const gamma = (bulk_density / 100) * 9.81; 
-    const z = 3.0; 
-    const beta = slope * (Math.PI / 180); 
+    // --- B. PHYSICS (Infinite Slope Model) ---
+    const gamma = (bulk_density / 100) * 9.81; // Unit Weight (kN/m3)
+    const z = 4.0; // Slip depth (meters)
+    const beta = slope * (Math.PI / 180); // Slope in Radians
 
-    const sigma = gamma * z * Math.pow(Math.cos(beta), 2); 
-    const tau_driving = gamma * z * Math.sin(beta) * Math.cos(beta); 
+    // Forces
+    const sigma = gamma * z * Math.pow(Math.cos(beta), 2); // Normal Stress
+    const tau_driving = gamma * z * Math.sin(beta) * Math.cos(beta); // Shear Stress
 
-    // --- RAIN INFLUENCE ---
-    // Higher rain = higher pore pressure (u)
-    let u = 0;
-    // Note: rain here is "intensity" (mm * 10)
-    if (rain > 800) u = sigma * 0.5; // Extreme
-    else if (rain > 400) u = sigma * 0.3; 
-    else if (rain > 100) u = sigma * 0.1; 
+    // --- C. HYDROLOGY (Pore Water Pressure) ---
+    // Rain intensity (rain) is passed as scaled units from the route.
+    // We calculate 'm', the saturation ratio (0 to 1).
+    let m = 0; 
+    if (rain > 1000) m = 1.0;       // Fully saturated (Flood/Storm)
+    else if (rain > 500) m = 0.6;   // Heavy Rain
+    else if (rain > 100) m = 0.2;   // Light Rain
 
+    // Pore water pressure (u) reduces friction
+    // u = m * unit_weight_water * z * cos^2(beta)
+    const gamma_w = 9.81; 
+    const u = m * gamma_w * z * Math.pow(Math.cos(beta), 2);
+
+    // Effective Normal Stress (The actual grip of the soil)
     const sigma_effective = Math.max(0, sigma - u);
+
+    // Resisting Strength (Coulomb Equation)
     const tanPhi = Math.tan(phi * (Math.PI / 180));
     const tau_resisting = c + (sigma_effective * tanPhi);
+
+    // --- D. FACTOR OF SAFETY (FoS) ---
+    let FoS = tau_resisting / (tau_driving + 0.0001); // Avoid div by 0
+
+    // Handle flat terrain edge case
+    if (slope < 2) FoS = 10; 
+
+    // --- E. INTELLIGENT REASONING GENERATOR ---
+    // This logic determines *WHY* the FoS is low/high
     
-    let FoS = tau_resisting / (tau_driving + 0.001);
+    let contributors = [];
+    let state = "";
 
-    let probability = 0;
-    if (slope < 1) { 
-        FoS = 20.0;
-        probability = 0.01;
+    // 1. Analyze Slope
+    if (slope > 40) contributors.push("critically steep slope");
+    else if (slope > 30) contributors.push("steep terrain");
+
+    // 2. Analyze Soil
+    if (fClay > 0.4) contributors.push("weak clay soil");
+    else if (fSand > 0.6 && slope > 30) contributors.push("loose sandy soil");
+
+    // 3. Analyze Water
+    if (m > 0.5) contributors.push("high pore water pressure");
+    else if (m > 0.1) contributors.push("soil saturation");
+
+    // Construct the sentence
+    if (FoS < 1.0) {
+        state = "CRITICAL FAILURE.";
+        if (m > 0.5 && slope > 25) {
+            state += " Rain has liquefied the slope.";
+        } else if (slope > phi) {
+            state += " Slope angle exceeds soil friction angle.";
+        }
+    } else if (FoS < 1.3) {
+        state = "Unstable.";
+        if (m > 0) state += " Rainfall is reducing soil grip.";
+        else state += " Near equilibrium limit.";
     } else {
-        if (FoS < 1.0) probability = 0.95; 
-        else if (FoS < 1.2) probability = 0.75; 
-        else if (FoS < 1.5) probability = 0.40; 
-        else if (FoS < 2.0) probability = 0.20; 
-        else probability = 0.05; 
+        state = "Stable.";
     }
 
+    // Join contributors naturally
+    let cause = contributors.length > 0 
+        ? `Driven by ${contributors.join(" and ")}.` 
+        : "Conditions are within safety limits.";
+
+    const reason = `${state} ${cause} (FoS: ${FoS.toFixed(2)})`;
+
+    // Calculate Risk Level for UI
     let level = "Low";
-    if (probability > 0.7) level = "High";
-    else if (probability > 0.3) level = "Medium";
-
-    // Dynamic Reasoning
-    let reason = `Soil is ${fClay > fSand ? 'Clay-heavy' : 'Sandy'} (${clay.toFixed(0)}% Clay). `;
-    if (level === "High") {
-        if (rain > 400) reason += "HEAVY RAINFALL destabilized the slope!";
-        else reason += "Slope is too steep for this soil type.";
-    } else if (level === "Medium") {
-        reason += "Monitor closely.";
-    } else {
-        reason += "Stable conditions.";
-    }
+    if (FoS < 1.0) level = "High";
+    else if (FoS < 1.3) level = "Medium";
 
     return {
         level,
-        reason,
+        reason, // This is now the detailed string
         details: {
             FoS: FoS,
             cohesion: c.toFixed(2),
             friction: phi.toFixed(2),
-            shear_strength: tau_resisting,
-            shear_stress: tau_driving
+            saturation: (m * 100).toFixed(0) + "%"
         }
     };
 };
 
-// --- 3. ROUTE ---
-
 app.post('/predict', async (req, res) => {
-    // 1. Get manualRain from body
-    const { lat, lng, manualRain } = req.body; 
-    
-    console.log(`\n📍 Analysis: ${lat}, ${lng} | Rain Override: ${manualRain ?? 'None'}`);
+    const { lat, lng, manualRain } = req.body;
+    console.log(`\n📍 Analysis: ${lat}, ${lng} | Rain Override: ${manualRain}`);
 
     try {
         const [weather, soil, topo] = await Promise.all([
@@ -167,31 +201,26 @@ app.post('/predict', async (req, res) => {
         let features = { ...weather, ...soil, ...topo };
         let isSimulated = false;
 
-        // --- OVERRIDE LOGIC ---
-        // If user sent a manual rain value (even 0), we use it.
+        // Apply Manual Rain Override
         if (manualRain !== null && manualRain !== undefined) {
             features.precip_real = manualRain;
-            features.rain = manualRain * 10; // Apply physics scaling (mm -> intensity unit)
+            features.rain = manualRain * 10; 
             isSimulated = true;
         }
 
         const prediction = calculateLandslideRisk(features);
         
-        console.log(`📊 Result: ${prediction.level} (FoS: ${prediction.details.FoS.toFixed(2)})`);
+        console.log(`📊 AI Reason: ${prediction.reason}`);
 
         res.json({
             location: { lat, lng },
             data: features,
             prediction: prediction,
-            isSimulated: isSimulated // Tell frontend we faked the weather
+            isSimulated: isSimulated
         });
 
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Failed" });
     }
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ Accurate Physics Engine running on port ${PORT}`);
 });
