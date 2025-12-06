@@ -43,7 +43,6 @@ function App() {
         setLoading(true);
         // Keep previous result visible while loading new simulation
         // setResult(null); 
-        
         try {
             // Determine if we are sending manual rain or null (for live weather)
             const rainToSend = (simMode && manualRainOverride !== null) ? manualRainOverride : (simMode ? rainValue : null);
