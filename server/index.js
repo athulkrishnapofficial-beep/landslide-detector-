@@ -25,7 +25,7 @@ const fetchWeather = async (lat, lon) => {
         }; 
     } catch (e) {
         console.error("⚠️ Weather API Error:", e.message);
-        return { temp: 25, humidity: 50, rain: 0, precip_real: 0, code: 0 }; 
+        return { temp: 0, humidity: 0, rain: 0, precip_real: 0, code: 0 }; 
     }
 };
 
