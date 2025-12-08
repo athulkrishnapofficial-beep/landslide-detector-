@@ -25,6 +25,8 @@ function App() {
     const [result, setResult] = useState(null);
     const [simMode, setSimMode] = useState(false);
     const [rainValue, setRainValue] = useState(0);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [depth, setDepth] = useState(2.5); // failure depth in meters
 
     const getFrictionDisplay = (res) => {
         if (!res || !res.prediction || !res.prediction.details) return '—';
@@ -40,6 +42,7 @@ function App() {
         return val !== null && val !== undefined ? `${parseFloat(val).toFixed(1)} mm` : '—';
     };
 
+    // Re-run when rain slider moves in sim mode
     useEffect(() => {
         if (marker && simMode) {
             const timer = setTimeout(() => {
@@ -49,6 +52,16 @@ function App() {
         }
     }, [rainValue, simMode]);
 
+    // Re-run when depth changes (if there's already a selected location)
+    useEffect(() => {
+        if (marker) {
+            const timer = setTimeout(() => {
+                predictRisk(marker);
+            }, 400);
+            return () => clearTimeout(timer);
+        }
+    }, [depth]);
+
     const predictRisk = async (latlng, manualRainOverride = null) => {
         setLoading(true);
         try {
@@ -57,11 +70,51 @@ function App() {
             const response = await axios.post('https://landslide-detector-backend.vercel.app/predict', {
                 lat: latlng.lat,
                 lng: latlng.lng,
-                manualRain: rainToSend
+                manualRain: rainToSend,
+                depth: Number(depth) || 2.5
             });
             setResult(response.data);
         } catch (error) {
+            console.error(error);
             alert("Server Error. Make sure the backend is running!");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Manual location search using Nominatim
+    const handleLocationSearch = async () => {
+        const q = searchQuery.trim();
+        if (!q) return;
+        try {
+            setLoading(true);
+            const res = await axios.get('https://nominatim.openstreetmap.org/search', {
+                params: {
+                    q,
+                    format: 'json',
+                    limit: 1
+                },
+                headers: {
+                    // Nominatim wants some identification; from browser this is best effort
+                    'Accept-Language': 'en'
+                }
+            });
+
+            if (!res.data || res.data.length === 0) {
+                alert("Location not found. Try a more specific name.");
+                return;
+            }
+
+            const loc = res.data[0];
+            const lat = parseFloat(loc.lat);
+            const lng = parseFloat(loc.lon);
+
+            const latlng = { lat, lng };
+            setMarker(latlng);
+            predictRisk(latlng);
+        } catch (err) {
+            console.error(err);
+            alert("Location search failed.");
         } finally {
             setLoading(false);
         }
@@ -88,6 +141,56 @@ function App() {
                 <div className="bg-white/95 backdrop-blur-md p-5 rounded-2xl shadow-xl border-l-8 border-cyan-500">
                     <h1 className="text-2xl font-extrabold text-slate-800">LAP <span className="text-cyan-500">SUS</span></h1>
                     <p className="text-xs text-slate-500 mt-1">Real-time Landslide Analysis System</p>
+                </div>
+
+                {/* Manual location search + depth input */}
+                <div className="bg-white/95 backdrop-blur-md p-4 rounded-xl shadow-lg space-y-3">
+                    <div>
+                        <p className="text-xs font-bold uppercase text-slate-500 mb-1">Manual Location</p>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                placeholder="Search place (eg. Munnar, Kerala)"
+                                className="flex-1 px-2 py-1.5 text-xs border rounded-lg border-slate-300 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                            />
+                            <button
+                                onClick={handleLocationSearch}
+                                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-cyan-600 text-white hover:bg-cyan-700"
+                            >
+                                Go
+                            </button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div className="flex justify-between items-center mb-1">
+                            <span className="text-xs font-bold uppercase text-slate-500">Failure Depth</span>
+                            <span className="text-[11px] text-slate-600">{depth} m</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="range"
+                                min="0.5"
+                                max="15"
+                                step="0.5"
+                                value={depth}
+                                onChange={(e) => setDepth(Number(e.target.value))}
+                                className="flex-1 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                            />
+                            <input
+                                type="number"
+                                min="0.5"
+                                max="15"
+                                step="0.5"
+                                value={depth}
+                                onChange={(e) => setDepth(Number(e.target.value) || 2.5)}
+                                className="w-16 px-2 py-1 text-xs border rounded-lg border-slate-300 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1">Approximate depth of potential failure plane.</p>
+                    </div>
                 </div>
 
                 <div className="bg-white/95 backdrop-blur-md p-4 rounded-xl shadow-lg">
@@ -161,10 +264,11 @@ function App() {
                                 <p className="text-sm font-medium text-slate-700 leading-relaxed">{result.prediction.reason}</p>
                             </div>
 
-                            {result.prediction.soilType && (
+                            {/* FIX: soil_type instead of soilType */}
+                            {result.prediction.soil_type && (
                                 <div className="bg-amber-50 p-3 rounded-lg border border-amber-200">
                                     <p className="text-[10px] text-amber-700 uppercase font-bold mb-1">Soil Classification</p>
-                                    <p className="text-lg font-bold text-amber-900">{result.prediction.soilType}</p>
+                                    <p className="text-lg font-bold text-amber-900">{result.prediction.soil_type}</p>
                                     <p className="text-xs text-amber-600 mt-1">
                                         Clay: {result.data.clay.toFixed(0)}% | Sand: {result.data.sand.toFixed(0)}% | Silt: {result.data.silt.toFixed(0)}%
                                     </p>
@@ -217,6 +321,11 @@ function App() {
                                         warning={parseFloat(result.prediction.details.shear_stress) > parseFloat(result.prediction.details.shear_strength)}
                                     />
                                 </div>
+                                {result.prediction.details.depth && (
+                                    <p className="text-[10px] text-slate-500 mt-1">
+                                        Failure depth used: {result.prediction.details.depth} m
+                                    </p>
+                                )}
                             </div>
 
                             <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">

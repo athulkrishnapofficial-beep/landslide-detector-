@@ -179,81 +179,59 @@ const getKoppenClimate = (lat, temp, temp_max, temp_min, rain_7day) => {
 // --- 3. SOIL TEXTURE CLASSIFICATION (USDA) ---
 
 const classifySoilTexture = (clay, sand, silt) => {
-    // 1. Validate inputs
     if (clay < 0 || sand < 0 || silt < 0) {
         throw new Error("Inputs cannot be negative");
     }
 
-    // 2. Normalize inputs to sum to 100%
-    // This is crucial because real-world data often sums to 99.8% or 101.2%
     const sum = clay + sand + silt;
-    if (sum === 0) return "Unknown"; // Prevent divide by zero
+    if (sum === 0) return "Unknown";
 
     const nClay = (clay / sum) * 100;
     const nSand = (sand / sum) * 100;
     const nSilt = (silt / sum) * 100;
 
-    // 3. USDA Classification Logic
-    // We strictly follow the USDA flowchart hierarchy to avoid overlapping conditions
-
-    // --- Tier 1: High Clay (> 40%) ---
     if (nClay >= 40) {
         if (nSilt >= 40) return "Silty Clay";
         if (nSand <= 45) return "Clay";
-        return "Silty Clay"; // Fallback for edge cases, though logical path usually covered
+        return "Silty Clay";
     }
 
-    // --- Tier 2: Sandy Clay Exception (35% - 40%) ---
-    // Sandy Clay dips below the 40% line
     if (nClay >= 35 && nSand >= 45) {
         return "Sandy Clay";
     }
 
-    // --- Tier 3: Middle Clays (27% - 40%) ---
     if (nClay >= 27) {
         if (nSand <= 20) return "Silty Clay Loam";
         if (nSand <= 45) return "Clay Loam";
-        return "Sandy Clay Loam"; // Overlap handling
+        return "Sandy Clay Loam";
     }
 
-    // --- Tier 4: Lower Clays (20% - 27%) ---
     if (nClay >= 20) {
-        if (nSilt < 28 && nSand > 45) return "Sandy Clay Loam"; // The bottom tail of SCL
-        if (nSilt >= 50) return "Silt Loam"; // High silt, moderate clay
-        return "Loam"; // The rest in this tier is Loam
+        if (nSilt < 28 && nSand > 45) return "Sandy Clay Loam";
+        if (nSilt >= 50) return "Silt Loam";
+        return "Loam";
     }
 
-    // --- Tier 5: Low Clay (< 20%) ---
-    
-    // The "Silt" corner
     if (nSilt >= 80 && nClay < 12) {
         return "Silt";
     }
 
-    // The "Silt Loam" area (extends into low clay)
     if (nSilt >= 50) {
         return "Silt Loam";
     }
 
-    // The Sandy side is the most complex. 
-    // USDA uses specific "silt + x * clay" logic for the Sand/Loamy Sand border.
-    
-    // Sand: roughly silt + 1.5*clay < 15
     if ((nSilt + 1.5 * nClay) < 15) {
         return "Sand";
     }
 
-    // Loamy Sand: roughly silt + 2*clay < 30
     if ((nSilt + 2 * nClay) < 30) {
         return "Loamy Sand";
     }
 
-    // Sandy Loam: Everything else on the left side
     if (nSand > 52 || (nClay < 7 && nSilt < 50)) {
         return "Sandy Loam";
     }
 
-    // If none of the above, it falls into the central Loam category
     return "Loam";
 };
 
@@ -264,20 +242,22 @@ const calculateLandslideRisk = (features, climate) => {
         rain_current, rain_7day, slope,
         clay: rawClay, sand: rawSand, silt: rawSilt, bulk_density: rawBD,
         elevation, temp, code, isWater, humidity, wind_speed,
-        organic_carbon: rawOC, ph: rawPH, aspect 
+        organic_carbon: rawOC, ph: rawPH, aspect,
+        depth: rawDepth
     } = features;
 
-    // --- SANITIZE SOIL / MATERIAL INPUTS (FIX FOR φ UNDEFINED) ---
     const clay = Number.isFinite(rawClay) ? rawClay : 0;
     const sand = Number.isFinite(rawSand) ? rawSand : 0;
     const silt = Number.isFinite(rawSilt) ? rawSilt : Math.max(0, 100 - clay - sand);
-    const bulk_density = Number.isFinite(rawBD) ? rawBD : 140; // generic kN/m³-equivalent basis
+    const bulk_density = Number.isFinite(rawBD) ? rawBD : 140;
     const organic_carbon = Number.isFinite(rawOC) ? rawOC : 0;
     const ph = Number.isFinite(rawPH) ? rawPH : 7;
 
+    // user-controlled failure depth
+    const z = (Number.isFinite(rawDepth) && rawDepth > 0) ? rawDepth : 2.5;
+
     // --- STEP 1: ENVIRONMENT DETECTION ---
 
-    // If slope angle AND elevation are 0 -> treat as sea/water body
     if (slope === 0 && elevation === 0) {
         return {
             level: "Safe",
@@ -294,12 +274,12 @@ const calculateLandslideRisk = (features, climate) => {
                 pore_pressure: 0,
                 saturation: 0,
                 infiltration_rate: 0,
-                root_cohesion: 0
+                root_cohesion: 0,
+                depth: z
             }
         };
     }
 
-    // If temperature is 0 or less -> ice detected
     if (temp <= 0) {
         return {
             level: "High",
@@ -316,23 +296,22 @@ const calculateLandslideRisk = (features, climate) => {
                 pore_pressure: 0,
                 saturation: 0,
                 infiltration_rate: 0,
-                root_cohesion: 0
+                root_cohesion: 0,
+                depth: z
             }
         };
     }
 
-    // A. Ocean/Water Body (general fallback)
     if (isWater || (elevation <= 2 && bulk_density < 15)) {
         return {
             level: "Safe",
             reason: "🌊 Ocean or Large Water Body Detected",
             environment: "Water Body",
             soil_type: "N/A",
-            details: { FoS: 100, probability: 0, cohesion: 0, friction_angle: 0, shear_strength: 0, shear_stress: 0, pore_pressure: 0, saturation: 0, infiltration_rate: 0, root_cohesion: 0 }
+            details: { FoS: 100, probability: 0, cohesion: 0, friction_angle: 0, shear_strength: 0, shear_stress: 0, pore_pressure: 0, saturation: 0, infiltration_rate: 0, root_cohesion: 0, depth: z }
         };
     }
 
-    // B. Permafrost/Polar Regions
     if (climate.permafrost || temp < -10) {
         const thawRisk = temp > -2 && rain_current > 0;
         return {
@@ -342,11 +321,10 @@ const calculateLandslideRisk = (features, climate) => {
                 : "❄️ Stable Permafrost Region",
             environment: "Permafrost",
             soil_type: "Frozen",
-            details: { FoS: thawRisk ? 0.8 : 3.0, probability: thawRisk ? 0.85 : 0.05, cohesion: 0, friction_angle: 0, shear_strength: 0, shear_stress: 0, pore_pressure: 0, saturation: 0, infiltration_rate: 0, root_cohesion: 0 }
+            details: { FoS: thawRisk ? 0.8 : 3.0, probability: thawRisk ? 0.85 : 0.05, cohesion: 0, friction_angle: 0, shear_strength: 0, shear_stress: 0, pore_pressure: 0, saturation: 0, infiltration_rate: 0, root_cohesion: 0, depth: z }
         };
     }
 
-    // C. Snow/Ice Cover (avalanche-style risk)
     const isSnow = [71, 73, 75, 77, 85, 86].includes(code) || (temp < 2 && rain_current > 0);
     if (isSnow && slope > 20) {
         return {
@@ -354,7 +332,7 @@ const calculateLandslideRisk = (features, climate) => {
             reason: `❄️ Snow accumulation on ${slope.toFixed(1)}° slope - Avalanche risk`,
             environment: "Snow-covered",
             soil_type: "Snow/Ice",
-            details: { FoS: slope > 35 ? 0.7 : 1.1, probability: slope > 35 ? 0.95 : 0.70, cohesion: 0, friction_angle: 0, shear_strength: 0, shear_stress: 0, pore_pressure: 0, saturation: 0, infiltration_rate: 0, root_cohesion: 0 }
+            details: { FoS: slope > 35 ? 0.7 : 1.1, probability: slope > 35 ? 0.95 : 0.70, cohesion: 0, friction_angle: 0, shear_strength: 0, shear_stress: 0, pore_pressure: 0, saturation: 0, infiltration_rate: 0, root_cohesion: 0, depth: z }
         };
     }
 
@@ -368,25 +346,20 @@ const calculateLandslideRisk = (features, climate) => {
     const fSand = sand / 100;
     const fSilt = silt / 100;
 
-    // COHESION (kPa) - Enhanced with organic matter and moisture effects
     let c_base = (fClay * 45) + (fSilt * 12) + (fSand * 0.5);
-    let c_organic = Math.min(organic_carbon * 2, 10); // Organic matter adds cohesion
+    let c_organic = Math.min(organic_carbon * 2, 10);
     let c_dry = c_base + c_organic;
     
-    // Moisture reduces cohesion in clay soils
     const saturation = Math.min(rain_7day / 100, 1.0);
     let c = c_dry * (1 - saturation * fClay * 0.4);
 
-    // FRICTION ANGLE (degrees)
     let phi_base = (fSand * 38) + (fSilt * 32) + (fClay * 18);
-    let phi = phi_base + (bulk_density / 1000) * 5; // Density increases friction
+    let phi = phi_base + (bulk_density / 1000) * 5;
 
-    // 🔒 Fallback: if somehow NaN/Infinity, clamp to a reasonable default
     if (!Number.isFinite(phi)) {
-        phi = 30; // generic average friction angle
+        phi = 30;
     }
 
-    // VEGETATION ROOT COHESION (based on climate)
     let root_cohesion = 0;
     if (climate.vegetation === "dense") root_cohesion = 15;
     else if (climate.vegetation === "moderate") root_cohesion = 8;
@@ -394,48 +367,33 @@ const calculateLandslideRisk = (features, climate) => {
     
     c += root_cohesion;
 
-    // --- STEP 4: RAINFALL INTENSITY & INFILTRATION ---
-
-    // Short-term intensity vs long-term accumulation
-    const rainfall_intensity = rain_current * 10; // mm/hr effect
-    const antecedent_moisture = Math.min(rain_7day / 150, 1.0); // 0-1 scale
+    const rainfall_intensity = rain_current * 10;
+    const antecedent_moisture = Math.min(rain_7day / 150, 1.0);
     
-    // Infiltration rate (depends on soil texture)
-    let infiltration_rate = (fSand * 30) + (fSilt * 10) + (fClay * 2); // mm/hr
-    
-    // Excess rain that doesn't infiltrate increases pore pressure
+    let infiltration_rate = (fSand * 30) + (fSilt * 10) + (fClay * 2);
     const excess_rain = Math.max(0, rainfall_intensity - infiltration_rate);
 
-    // --- STEP 5: SLOPE STABILITY PHYSICS ---
-
-    const gamma = (bulk_density / 100) * 9.81; // Unit weight (kN/m³)
-    const z = 2.5; // Failure depth (meters)
+    const gamma = (bulk_density / 100) * 9.81;
     const beta = slope * (Math.PI / 180);
 
-    // Normal and Shear Stresses
     const sigma = gamma * z * Math.pow(Math.cos(beta), 2);
     const tau_driving = gamma * z * Math.sin(beta) * Math.cos(beta);
 
-    // PORE WATER PRESSURE (Enhanced Model)
     let u = 0;
     const base_saturation = antecedent_moisture * 0.5;
     const intensity_factor = Math.min(excess_rain / 20, 0.5);
-    const clay_retention = fClay * 0.3; // Clay retains water
+    const clay_retention = fClay * 0.3;
     
     u = sigma * (base_saturation + intensity_factor + clay_retention);
-    u = Math.min(u, sigma * 0.9); // Cap at 90% of normal stress
+    u = Math.min(u, sigma * 0.9);
     if (!Number.isFinite(u)) u = 0;
 
-    // Effective Stress & Shear Strength
     const sigma_effective = Math.max(0, sigma - u);
     const tanPhi = Math.tan(phi * (Math.PI / 180));
     const tau_resisting = c + (sigma_effective * tanPhi);
     
-    // FACTOR OF SAFETY
     let FoS = tau_resisting / (tau_driving + 0.01);
     if (!Number.isFinite(FoS)) FoS = 15;
-
-    // --- STEP 6: RISK PROBABILITY ---
 
     let probability = 0;
     
@@ -451,46 +409,36 @@ const calculateLandslideRisk = (features, climate) => {
         else if (FoS < 1.3) probability = 0.70;
         else if (FoS < 1.7) probability = 0.35;
         else probability = 0.10;
-    } else { // Steep slopes
+    } else {
         if (FoS < 1.0) probability = 0.98;
         else if (FoS < 1.2) probability = 0.85;
         else if (FoS < 1.5) probability = 0.55;
         else probability = 0.20;
     }
 
-    // Adjust for rapid rainfall
     if (rainfall_intensity > 30) probability = Math.min(probability * 1.4, 0.99);
-    
-    // Adjust for cumulative rainfall
     if (rain_7day > 150) probability = Math.min(probability * 1.3, 0.99);
-
-    // --- STEP 7: RISK LEVEL ---
 
     let level = "Low";
     if (probability > 0.75) level = "Extreme";
     else if (probability > 0.50) level = "High";
     else if (probability > 0.25) level = "Medium";
 
-    // --- STEP 8: DETAILED REASONING ---
-
     let factors = [];
     
-    // Topography
     if (slope > 45) factors.push(`⚠️ Very steep slope (${slope.toFixed(1)}°) - Highly unstable`);
     else if (slope > 30) factors.push(`Steep slope (${slope.toFixed(1)}°) increases risk`);
     else if (slope < 8) factors.push(`Gentle slope (${slope.toFixed(1)}°) - Stable terrain`);
     else factors.push(`Moderate slope (${slope.toFixed(1)}°)`);
 
-    // Soil characteristics
     factors.push(`Soil: ${soilTexture} (${clay.toFixed(0)}% clay, ${sand.toFixed(0)}% sand)`);
-    
+
     if (soilTexture.includes("Clay") && rain_7day > 50) {
         factors.push(`Clay soil retains water - Reduced friction`);
     } else if (soilTexture.includes("Sand") && rain_7day > 100) {
         factors.push(`Sandy soil drains quickly but lacks cohesion`);
     }
 
-    // Rainfall analysis
     if (rainfall_intensity > 40) {
         factors.push(`🌧️ Extreme rainfall intensity (${rain_current.toFixed(1)} mm/hr)`);
     } else if (rain_7day > 150) {
@@ -499,12 +447,10 @@ const calculateLandslideRisk = (features, climate) => {
         factors.push(`Moderate cumulative rainfall (${rain_7day.toFixed(0)}mm)`);
     }
 
-    // Vegetation
     if (root_cohesion > 10) {
         factors.push(`🌳 Dense vegetation provides root reinforcement (+${root_cohesion.toFixed(0)} kPa)`);
     }
 
-    // Stability assessment
     if (FoS < 1.0) {
         factors.push(`❌ FAILURE IMMINENT (FoS: ${FoS.toFixed(2)}) - Slope cannot support itself`);
     } else if (FoS < 1.3) {
@@ -517,7 +463,6 @@ const calculateLandslideRisk = (features, climate) => {
 
     const reason = factors.join(" • ");
 
-    // Safe pore pressure percentage
     const sigmaSafe = (sigma > 0 && Number.isFinite(sigma)) ? sigma : 1;
     const porePct = Number.isFinite(u / sigmaSafe) ? (u / sigmaSafe * 100) : 0;
 
@@ -536,7 +481,8 @@ const calculateLandslideRisk = (features, climate) => {
             pore_pressure: parseFloat(porePct.toFixed(0)),
             saturation: parseFloat((antecedent_moisture * 100).toFixed(0)),
             infiltration_rate: parseFloat(infiltration_rate.toFixed(1)),
-            root_cohesion: parseFloat(root_cohesion.toFixed(1))
+            root_cohesion: parseFloat(root_cohesion.toFixed(1)),
+            depth: parseFloat(z.toFixed(2))
         }
     };
 };
@@ -544,8 +490,8 @@ const calculateLandslideRisk = (features, climate) => {
 // --- 5. MAIN ROUTE ---
 
 app.post('/predict', async (req, res) => {
-    const { lat, lng, manualRain } = req.body; 
-    console.log(`\n📍 Analysis: ${lat}, ${lng} | Rain Override: ${manualRain ?? 'Live'}`);
+    const { lat, lng, manualRain, depth } = req.body; 
+    console.log(`\n📍 Analysis: ${lat}, ${lng} | Rain Override: ${manualRain ?? 'Live'} | Depth: ${depth ?? 'default'}`);
 
     try {
         const [weather, soil, topo] = await Promise.all([
@@ -554,17 +500,15 @@ app.post('/predict', async (req, res) => {
             calculateSlope(lat, lng)
         ]);
 
-        let features = { ...weather, ...soil, ...topo };
+        let features = { ...weather, ...soil, ...topo, depth: depth ?? 2.5 };
         let isSimulated = false;
 
-        // Apply manual rain override
         if (manualRain !== null && manualRain !== undefined) {
             features.rain_current = manualRain;
             features.rain_7day = manualRain * 7; 
             isSimulated = true;
         }
 
-        // Climate classification
         const climate = getKoppenClimate(
             lat, 
             features.temp, 
@@ -575,7 +519,6 @@ app.post('/predict', async (req, res) => {
 
         const prediction = calculateLandslideRisk(features, climate);
         
-        // Enhanced logging
         console.log(`🌍 Climate: ${climate.zone} | Vegetation: ${climate.vegetation}`);
         console.log(`🏔️ Topography: ${features.elevation}m elevation, ${features.slope}° slope`);
         console.log(`🧪 Soil: ${prediction.soil_type} (Clay: ${features.clay?.toFixed?.(0) ?? 'N/A'}%, Sand: ${features.sand?.toFixed?.(0) ?? 'N/A'}%)`);
