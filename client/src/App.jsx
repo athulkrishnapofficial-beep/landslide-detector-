@@ -33,6 +33,13 @@ function App() {
         return val !== null && val !== undefined ? `${val}°` : '—';
     };
 
+    const getRainDisplay = (res) => {
+        if (!res || !res.data) return '—';
+        const d = res.data;
+        const val = (d.rain_current ?? d.precip_real ?? d.rain) ?? null;
+        return val !== null && val !== undefined ? `${parseFloat(val).toFixed(1)} mm` : '—';
+    };
+
     useEffect(() => {
         if (marker && simMode) {
             const timer = setTimeout(() => {
@@ -173,7 +180,7 @@ function App() {
                                     <StatBox label="Humidity" value={`${result.data.humidity}%`} />
                                     <div className={`p-2 rounded border ${result.isSimulated ? 'bg-cyan-50 border-cyan-300' : 'bg-slate-50 border-slate-200'}`}>
                                         <p className={`text-[10px] uppercase tracking-wide font-bold ${result.isSimulated ? 'text-cyan-600' : 'text-slate-400'}`}>Rainfall</p>
-                                        <p className={`text-lg font-bold ${result.isSimulated ? 'text-cyan-700' : 'text-slate-700'}`}>{result.data.precip_real} mm</p>
+                                        <p className={`text-lg font-bold ${result.isSimulated ? 'text-cyan-700' : 'text-slate-700'}`}>{getRainDisplay(result)}</p>
                                     </div>
                                 </div>
                             </div>
