@@ -127,7 +127,7 @@ const calculateSlope = async (lat, lon) => {
         const hSouth = elevations[2]; 
         const hEast = elevations[3];  
         
-        // Ocean detection
+        // Ocean detection baseline
         if (h0 === 0 && hNorth === 0 && hEast === 0) {
             return { elevation: 0, slope: 0, aspect: 0 };
         }
@@ -206,13 +206,60 @@ const calculateLandslideRisk = (features, climate) => {
 
     // --- STEP 1: ENVIRONMENT DETECTION ---
 
-    // A. Ocean/Water Body
+    // ✅ EXACT REQUIREMENT 1:
+    // If slope angle AND elevation are 0 -> treat as sea/water body
+    if (slope === 0 && elevation === 0) {
+        return {
+            level: "Safe",
+            reason: "🌊 Sea / Water Body Detected (slope = 0°, elevation = 0 m)",
+            environment: "Water Body",
+            soil_type: "Water",
+            details: {
+                FoS: 100,
+                probability: 0,
+                cohesion: 0,
+                friction_angle: 0,
+                shear_strength: 0,
+                shear_stress: 0,
+                pore_pressure: 0,
+                saturation: 0,
+                infiltration_rate: 0,
+                root_cohesion: 0
+            }
+        };
+    }
+
+    // ✅ EXACT REQUIREMENT 2:
+    // If temperature is 0 or less -> ice detected
+    if (temp <= 0) {
+        return {
+            level: "High",
+            reason: "🧊 Ice Detected (temperature at or below 0°C)",
+            environment: "Ice / Frozen Surface",
+            soil_type: "Ice",
+            details: {
+                FoS: 0.9,
+                probability: 85.0,
+                cohesion: 0,
+                friction_angle: 0,
+                shear_strength: 0,
+                shear_stress: 0,
+                pore_pressure: 0,
+                saturation: 0,
+                infiltration_rate: 0,
+                root_cohesion: 0
+            }
+        };
+    }
+
+    // A. Ocean/Water Body (general fallback)
     if (isWater || (elevation <= 2 && bulk_density < 15)) {
         return {
             level: "Safe",
             reason: "🌊 Ocean or Large Water Body Detected",
             environment: "Water Body",
-            details: { FoS: 100, probability: 0, soil_type: "N/A" }
+            soil_type: "N/A",
+            details: { FoS: 100, probability: 0, cohesion: 0, friction_angle: 0, shear_strength: 0, shear_stress: 0, pore_pressure: 0, saturation: 0, infiltration_rate: 0, root_cohesion: 0 }
         };
     }
 
@@ -225,18 +272,20 @@ const calculateLandslideRisk = (features, climate) => {
                 ? "🧊 Permafrost thawing detected - High instability risk"
                 : "❄️ Stable Permafrost Region",
             environment: "Permafrost",
-            details: { FoS: thawRisk ? 0.8 : 3.0, probability: thawRisk ? 0.85 : 0.05, soil_type: "Frozen" }
+            soil_type: "Frozen",
+            details: { FoS: thawRisk ? 0.8 : 3.0, probability: thawRisk ? 0.85 : 0.05, cohesion: 0, friction_angle: 0, shear_strength: 0, shear_stress: 0, pore_pressure: 0, saturation: 0, infiltration_rate: 0, root_cohesion: 0 }
         };
     }
 
-    // C. Snow/Ice Cover
+    // C. Snow/Ice Cover (avalanche-style risk)
     const isSnow = [71, 73, 75, 77, 85, 86].includes(code) || (temp < 2 && rain_current > 0);
     if (isSnow && slope > 20) {
         return {
             level: slope > 35 ? "Extreme" : "High",
             reason: `❄️ Snow accumulation on ${slope.toFixed(1)}° slope - Avalanche risk`,
             environment: "Snow-covered",
-            details: { FoS: slope > 35 ? 0.7 : 1.1, probability: slope > 35 ? 0.95 : 0.70, soil_type: "Snow/Ice" }
+            soil_type: "Snow/Ice",
+            details: { FoS: slope > 35 ? 0.7 : 1.1, probability: slope > 35 ? 0.95 : 0.70, cohesion: 0, friction_angle: 0, shear_strength: 0, shear_stress: 0, pore_pressure: 0, saturation: 0, infiltration_rate: 0, root_cohesion: 0 }
         };
     }
 
@@ -449,7 +498,7 @@ app.post('/predict', async (req, res) => {
         // Enhanced logging
         console.log(`🌍 Climate: ${climate.zone} | Vegetation: ${climate.vegetation}`);
         console.log(`🏔️ Topography: ${features.elevation}m elevation, ${features.slope}° slope`);
-        console.log(`🧪 Soil: ${prediction.soil_type} (Clay: ${features.clay.toFixed(0)}%, Sand: ${features.sand.toFixed(0)}%)`);
+        console.log(`🧪 Soil: ${prediction.soil_type} (Clay: ${features.clay?.toFixed?.(0) ?? 'N/A'}%, Sand: ${features.sand?.toFixed?.(0) ?? 'N/A'}%)`);
         console.log(`💧 Rainfall: Current ${features.rain_current}mm | 7-day: ${features.rain_7day.toFixed(0)}mm`);
         console.log(`📊 Result: ${prediction.level} Risk (FoS: ${prediction.details.FoS}, Probability: ${prediction.details.probability}%)`);
 
