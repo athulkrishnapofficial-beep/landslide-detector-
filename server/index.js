@@ -281,7 +281,7 @@ const calculateLandslideRisk = (features, climate) => {
     if (slope === 0 && elevation === 0) {
         return {
             level: "Safe",
-            reason: "🌊 Sea / Water Body Detected (slope = 0°, elevation = 0 m)",
+            reason: "🌊 Sea / Water Body Detected",
             environment: "Water Body",
             soil_type: "Water",
             details: {
