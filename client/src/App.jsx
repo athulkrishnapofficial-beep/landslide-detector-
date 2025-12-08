@@ -120,6 +120,33 @@ function App() {
         }
     };
 
+        const handleUseMyLocation = () => {
+        if (!navigator.geolocation) {
+            alert("Geolocation is not supported in this browser.");
+            return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                const lat = pos.coords.latitude;
+                const lng = pos.coords.longitude;
+                const latlng = { lat, lng };
+                setMarker(latlng);
+                predictRisk(latlng);
+            },
+            (err) => {
+                console.error(err);
+                alert("Failed to get location. Make sure location permission is allowed.");
+            },
+            {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 60000,
+            }
+        );
+    };
+
+
     const getEnvironmentIcon = (env) => {
         const icons = {
             "Water Body": "🌊",
@@ -144,9 +171,12 @@ function App() {
                 </div>
 
                 {/* Manual location search + depth input */}
+                                {/* Manual location search + depth input */}
                 <div className="bg-white/95 backdrop-blur-md p-4 rounded-xl shadow-lg space-y-3">
-                    <div>
-                        <p className="text-xs font-bold uppercase text-slate-500 mb-1">Manual Location</p>
+                    <div className="space-y-1.5">
+                        <p className="text-xs font-bold uppercase text-slate-500">Location</p>
+
+                        {/* Search bar */}
                         <div className="flex gap-2">
                             <input
                                 type="text"
@@ -162,7 +192,17 @@ function App() {
                                 Go
                             </button>
                         </div>
+
+                        {/* Auto location button */}
+                        <button
+                            onClick={handleUseMyLocation}
+                            className="w-full mt-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-emerald-500 text-emerald-700 hover:bg-emerald-50 flex items-center justify-center gap-1"
+                        >
+                            <span>🎯</span>
+                            <span>Use My Current Location</span>
+                        </button>
                     </div>
+
 
                     <div>
                         <div className="flex justify-between items-center mb-1">
