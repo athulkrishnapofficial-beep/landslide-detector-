@@ -198,7 +198,6 @@ function App() {
                             onClick={handleUseMyLocation}
                             className="w-full mt-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-emerald-500 text-emerald-700 hover:bg-emerald-50 flex items-center justify-center gap-1"
                         >
-                            <span>🎯</span>
                             <span>Use My Current Location</span>
                         </button>
                     </div>
