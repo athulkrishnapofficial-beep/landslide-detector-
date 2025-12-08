@@ -26,6 +26,13 @@ function App() {
     const [simMode, setSimMode] = useState(false);
     const [rainValue, setRainValue] = useState(0);
 
+    const getFrictionDisplay = (res) => {
+        if (!res || !res.prediction || !res.prediction.details) return '—';
+        const details = res.prediction.details;
+        const val = details.friction_angle ?? details.friction ?? null;
+        return val !== null && val !== undefined ? `${val}°` : '—';
+    };
+
     useEffect(() => {
         if (marker && simMode) {
             const timer = setTimeout(() => {
@@ -191,7 +198,7 @@ function App() {
                                 </h3>
                                 <div className="grid grid-cols-2 gap-2">
                                     <StatBox label="Cohesion (c)" value={`${result.prediction.details.cohesion} kPa`} />
-                                    <StatBox label="Friction (φ)" value={`${result.prediction.details.friction}°`} />
+                                    <StatBox label="Friction (φ)" value={getFrictionDisplay(result)} />
                                     <StatBox 
                                         label="Shear Strength" 
                                         value={`${result.prediction.details.shear_strength} kPa`}
