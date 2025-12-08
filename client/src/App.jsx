@@ -36,9 +36,17 @@ function App() {
     const getRainDisplay = (res) => {
         if (!res || !res.data) return '—';
         const d = res.data;
-        const val = (d.rain_current ?? d.precip_real ?? d.rain) ?? null;
+        // Prefer realtime current precipitation (mm) from the API
+        if (Number.isFinite(d.rain_current)) return `${parseFloat(d.rain_current).toFixed(1)} mm`;
+        // Fallback: if server provided 7-day cumulative, show average per day
+        if (Number.isFinite(d.rain_7day)) return `${parseFloat(d.rain_7day / 7).toFixed(1)} mm`;
+        // Legacy fallbacks
+        const val = (d.precip_real ?? d.rain ?? null);
         return val !== null && val !== undefined ? `${parseFloat(val).toFixed(1)} mm` : '—';
     };
+
+    // API base (use Vite env `VITE_API_URL` in production/dev or localhost fallback)
+    const API_BASE = (import.meta && import.meta.env && import.meta.env.VITE_API_URL) ? import.meta.env.VITE_API_URL : 'http://localhost:5000';
 
     useEffect(() => {
         if (marker && simMode) {
@@ -54,7 +62,7 @@ function App() {
         try {
             const rainToSend = (simMode && manualRainOverride !== null) ? manualRainOverride : (simMode ? rainValue : null);
 
-            const response = await axios.post('https://landslide-detector-backend.vercel.app/predict', {
+            const response = await axios.post(`${API_BASE}/predict`, {
                 lat: latlng.lat,
                 lng: latlng.lng,
                 manualRain: rainToSend
