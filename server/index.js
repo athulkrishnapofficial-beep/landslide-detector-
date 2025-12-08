@@ -179,20 +179,82 @@ const getKoppenClimate = (lat, temp, temp_max, temp_min, rain_7day) => {
 // --- 3. SOIL TEXTURE CLASSIFICATION (USDA) ---
 
 const classifySoilTexture = (clay, sand, silt) => {
-    // USDA Soil Texture Triangle Classification
-    if (silt + 1.5 * clay < 15) return "Sand";
-    if (silt + 1.5 * clay >= 15 && silt + 2 * clay < 30) return "Loamy Sand";
-    if (clay >= 7 && clay < 20 && sand > 52 && silt + 2 * clay >= 30) return "Sandy Loam";
-    if (clay >= 7 && clay < 27 && sand >= 28 && sand < 52 && silt >= 28 && silt < 50) return "Loam";
-    if (silt >= 50 && clay >= 12 && clay < 27) return "Silt Loam";
-    if (silt >= 80 && clay < 12) return "Silt";
-    if (clay >= 20 && clay < 35 && silt < 28 && sand > 45) return "Sandy Clay Loam";
-    if (clay >= 27 && clay < 40 && sand >= 20 && sand < 45) return "Clay Loam";
-    if (clay >= 27 && clay < 40 && sand < 20) return "Silty Clay Loam";
-    if (clay >= 35 && sand > 45) return "Sandy Clay";
-    if (clay >= 40 && silt >= 40) return "Silty Clay";
-    if (clay >= 40 && sand < 45 && silt < 40) return "Clay";
-    return "Loam"; // Default
+    // 1. Validate inputs
+    if (clay < 0 || sand < 0 || silt < 0) {
+        throw new Error("Inputs cannot be negative");
+    }
+
+    // 2. Normalize inputs to sum to 100%
+    // This is crucial because real-world data often sums to 99.8% or 101.2%
+    const sum = clay + sand + silt;
+    if (sum === 0) return "Unknown"; // Prevent divide by zero
+
+    const nClay = (clay / sum) * 100;
+    const nSand = (sand / sum) * 100;
+    const nSilt = (silt / sum) * 100;
+
+    // 3. USDA Classification Logic
+    // We strictly follow the USDA flowchart hierarchy to avoid overlapping conditions
+
+    // --- Tier 1: High Clay (> 40%) ---
+    if (nClay >= 40) {
+        if (nSilt >= 40) return "Silty Clay";
+        if (nSand <= 45) return "Clay";
+        return "Silty Clay"; // Fallback for edge cases, though logical path usually covered
+    }
+
+    // --- Tier 2: Sandy Clay Exception (35% - 40%) ---
+    // Sandy Clay dips below the 40% line
+    if (nClay >= 35 && nSand >= 45) {
+        return "Sandy Clay";
+    }
+
+    // --- Tier 3: Middle Clays (27% - 40%) ---
+    if (nClay >= 27) {
+        if (nSand <= 20) return "Silty Clay Loam";
+        if (nSand <= 45) return "Clay Loam";
+        return "Sandy Clay Loam"; // Overlap handling
+    }
+
+    // --- Tier 4: Lower Clays (20% - 27%) ---
+    if (nClay >= 20) {
+        if (nSilt < 28 && nSand > 45) return "Sandy Clay Loam"; // The bottom tail of SCL
+        if (nSilt >= 50) return "Silt Loam"; // High silt, moderate clay
+        return "Loam"; // The rest in this tier is Loam
+    }
+
+    // --- Tier 5: Low Clay (< 20%) ---
+    
+    // The "Silt" corner
+    if (nSilt >= 80 && nClay < 12) {
+        return "Silt";
+    }
+
+    // The "Silt Loam" area (extends into low clay)
+    if (nSilt >= 50) {
+        return "Silt Loam";
+    }
+
+    // The Sandy side is the most complex. 
+    // USDA uses specific "silt + x * clay" logic for the Sand/Loamy Sand border.
+    
+    // Sand: roughly silt + 1.5*clay < 15
+    if ((nSilt + 1.5 * nClay) < 15) {
+        return "Sand";
+    }
+
+    // Loamy Sand: roughly silt + 2*clay < 30
+    if ((nSilt + 2 * nClay) < 30) {
+        return "Loamy Sand";
+    }
+
+    // Sandy Loam: Everything else on the left side
+    if (nSand > 52 || (nClay < 7 && nSilt < 50)) {
+        return "Sandy Loam";
+    }
+
+    // If none of the above, it falls into the central Loam category
+    return "Loam";
 };
 
 // --- 4. ENHANCED RISK CALCULATION ---
