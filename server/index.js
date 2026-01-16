@@ -57,14 +57,23 @@ const fetchSoil = async (lat, lon) => {
         let ph = getVal('phh2o');
         let organic_carbon = getVal('ocd');
 
-        // Water/No-data detection - only mark as water if ALL three critical values are null
-        // This prevents false positives in coastal regions with sparse data
+        // FIX: If SoilGrids returns nulls, it is likely an URBAN area (concrete/roads), not necessarily water.
+        // We set isWater to FALSE and provide default "Urban Fill" soil parameters.
         if (clay === null && sand === null && bulk_density === null) {
-            console.log("⚠️ Soil API returned nulls (Water/Ocean/Urban)");
-            return { bulk_density: 0, clay: 0, sand: 0, silt: 0, ph: 7, organic_carbon: 0, isWater: true, raw: false };
+            console.log("⚠️ Soil API returned nulls (Likely Urban/Impervious Surface) - Using defaults");
+            return { 
+                bulk_density: 150, // Urban soil is often compacted (1.5 g/cm3)
+                clay: 30,          // Default loam approximation
+                sand: 40, 
+                silt: 30, 
+                ph: 7.0, 
+                organic_carbon: 1, 
+                isWater: false,    // <--- CHANGED FROM true TO false
+                raw: false 
+            };
         }
         
-        // If at least one value exists, treat it as land (not water)
+        // If at least one value exists, treat it as land
         if (clay === null) clay = 0;
         if (sand === null) sand = 0;
         if (bulk_density === null) bulk_density = 140;
@@ -91,23 +100,17 @@ const fetchSoil = async (lat, lon) => {
     } catch (e) {
         console.error("⚠️ Soil API Failed (Using Location-based fallback):", e.message);
         
-        // Improved fallback: use lat/lon to estimate typical soil
+        // Existing fallback logic...
         const absLat = Math.abs(lat);
         const noise = (Math.abs(lat * lon) % 13);
         
         let clay, sand, silt;
-        if (absLat > 60) { // Polar regions
-            clay = 15 + noise;
-            sand = 55 + noise;
-            silt = 30 - noise;
-        } else if (absLat < 23) { // Tropical
-            clay = 40 + noise;
-            sand = 25 + noise;
-            silt = 35 - noise;
-        } else { // Temperate
-            clay = 30 + noise;
-            sand = 35 + noise;
-            silt = 35 - noise;
+        if (absLat > 60) { 
+            clay = 15 + noise; sand = 55 + noise; silt = 30 - noise;
+        } else if (absLat < 23) { 
+            clay = 40 + noise; sand = 25 + noise; silt = 35 - noise;
+        } else { 
+            clay = 30 + noise; sand = 35 + noise; silt = 35 - noise;
         }
         
         return { 
