@@ -302,7 +302,7 @@ const calculateLandslideRisk = (features, climate) => {
         };
     }
 
-    if (isWater || (elevation <= 2 && bulk_density < 15)) {
+    if (isWater) {
         return {
             level: "Safe",
             reason: "🌊 Ocean or Large Water Body Detected",
