@@ -57,11 +57,17 @@ const fetchSoil = async (lat, lon) => {
         let ph = getVal('phh2o');
         let organic_carbon = getVal('ocd');
 
-        // Water/No-data detection
-        if (clay === null || sand === null || bulk_density === null) {
+        // Water/No-data detection - only mark as water if ALL three critical values are null
+        // This prevents false positives in coastal regions with sparse data
+        if (clay === null && sand === null && bulk_density === null) {
             console.log("⚠️ Soil API returned nulls (Water/Ocean/Urban)");
             return { bulk_density: 0, clay: 0, sand: 0, silt: 0, ph: 7, organic_carbon: 0, isWater: true, raw: false };
         }
+        
+        // If at least one value exists, treat it as land (not water)
+        if (clay === null) clay = 0;
+        if (sand === null) sand = 0;
+        if (bulk_density === null) bulk_density = 140;
 
         // Convert units: g/kg to %
         clay = clay / 10;
@@ -302,7 +308,7 @@ const calculateLandslideRisk = (features, climate) => {
         };
     }
 
-    if (isWater) {
+    if (isWater || elevation < -5) {
         return {
             level: "Safe",
             reason: "🌊 Ocean or Large Water Body Detected",
