@@ -4,42 +4,38 @@ const axios = require('axios');
 const { initSoils, getSoilProperties, detectSoilType } = require('./soilRaster');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
 
 // Initialize soil rasters on startup
-initSoils();
+if (process.env.NODE_ENV !== 'test') {
+    initSoils();
+}
 
-// CORS configuration for Vercel - More explicit
-const corsOptions = {
-    origin: function (origin, callback) {
-        const allowedOrigins = [
-            'https://landslide-detector-frontents.vercel.app',
-            'http://localhost:3000',
-            'http://localhost:5173',
-            'http://localhost:5000'
-        ];
-        
-        // Allow requests with no origin (like mobile apps or curl requests)
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            callback(null, true); // Allow for Vercel compatibility
-        }
-    },
+// ===== CORS CONFIGURATION =====
+// Allow all origins for Vercel
+app.use(cors({
+    origin: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
     credentials: true,
-    methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-    exposedHeaders: ['Content-Type', 'X-Total-Count'],
-    maxAge: 86400
-};
+    maxAge: 86400,
+    optionsSuccessStatus: 200
+}));
 
-app.use(cors(corsOptions));
+// Explicit OPTIONS handler for preflight
+app.options('*', cors());
 
-// Explicit preflight handler
-app.options('*', cors(corsOptions));
+// Middleware
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// ===== DEBUG MIDDLEWARE =====
+app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+    if (req.method === 'OPTIONS') {
+        console.log('  ↳ Preflight request detected');
+    }
+    next();
+});
 
 // --- 1. ENHANCED DATA FETCHING ---
 
@@ -546,46 +542,52 @@ app.post('/predict', async (req, res) => {
     }
 });
 
+// ===== ENDPOINT DEFINITIONS =====
+
 app.get('/health', (req, res) => {
-    res.set({
-        'Access-Control-Allow-Origin': '*',
-        'Content-Type': 'application/json'
+    res.json({ 
+        status: 'operational', 
+        version: '2.0', 
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV || 'unknown'
     });
-    res.json({ status: 'operational', version: '2.0', timestamp: new Date().toISOString() });
 });
 
 app.get('/', (req, res) => {
-    res.set({
-        'Access-Control-Allow-Origin': '*',
-        'Content-Type': 'application/json'
-    });
     res.json({ 
         message: 'Landslide Detector Backend API', 
         status: 'running',
         version: '2.0',
         endpoints: {
             health: '/health',
-            predict: '/predict'
-        }
+            predict: '/predict',
+            corsTest: '/cors-test'
+        },
+        environment: process.env.NODE_ENV || 'unknown'
     });
 });
 
 // CORS test endpoint
 app.get('/cors-test', (req, res) => {
-    res.set({
-        'Access-Control-Allow-Origin': '*',
-        'Content-Type': 'application/json'
-    });
     res.json({ 
         message: 'CORS is working!',
-        origin: req.get('origin'),
+        origin: req.get('origin') || 'no-origin',
         timestamp: new Date().toISOString()
     });
 });
 
-app.listen(PORT, () => {
-    console.log(`✅ Enhanced Landslide Prediction Engine v2.0`);
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📡 Features: Climate Classification | USDA Soil Texture | Advanced Physics`);
-    console.log(`🔗 CORS enabled for: https://landslide-detector-frontents.vercel.app`);
-});
+// ===== EXPORTS & SERVER START =====
+
+// Export app for Vercel serverless
+module.exports = app;
+
+// Listen only if running locally
+const PORT = process.env.PORT || 5000;
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, () => {
+        console.log(`✅ Enhanced Landslide Prediction Engine v2.0`);
+        console.log(`🚀 Server running on port ${PORT}`);
+        console.log(`📡 Features: Climate Classification | USDA Soil Texture | Advanced Physics`);
+        console.log(`🔗 CORS enabled for all origins`);
+    });
+}
