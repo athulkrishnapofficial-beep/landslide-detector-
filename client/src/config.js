@@ -1,11 +1,12 @@
 // API Configuration
-const API_URL = import.meta.env.VITE_API_URL || 'https://landslide-detector-backend.vercel.app';
+const API_URL = (import.meta.env.VITE_API_URL || 'https://landslide-detector-backend.vercel.app').replace(/\/$/, '');
 
 export const apiConfig = {
     baseURL: API_URL,
     endpoints: {
         predict: `${API_URL}/predict`,
-        health: `${API_URL}/health`
+        health: `${API_URL}/health`,
+        corsTest: `${API_URL}/cors-test`
     }
 };
 

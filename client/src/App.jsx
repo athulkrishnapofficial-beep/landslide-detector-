@@ -6,6 +6,7 @@ import L from 'leaflet';
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 import { apiConfig } from './config';
+import apiClient from './apiClient';
 
 let DefaultIcon = L.icon({ iconUrl: icon, shadowUrl: iconShadow, iconAnchor: [12, 41] });
 L.Marker.prototype.options.icon = DefaultIcon;
@@ -68,27 +69,21 @@ function App() {
         try {
             const rainToSend = (simMode && manualRainOverride !== null) ? manualRainOverride : (simMode ? rainValue : null);
 
-            const response = await axios.post(apiConfig.endpoints.predict, {
+            const response = await apiClient.post('/predict', {
                 lat: latlng.lat,
                 lng: latlng.lng,
                 manualRain: rainToSend,
                 depth: Number(depth) || 2.5
-            }, {
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                timeout: 30000
             });
             setResult(response.data);
         } catch (error) {
             console.error('Prediction error:', error);
             const errorMsg = error.response?.data?.message || error.message || 'Server Error';
-            alert(`Server Error: ${errorMsg}. Backend URL: ${apiConfig.endpoints.predict}`);
-
-    // Manual location search using Nominatim
-    const handleLocationSearch = async () => {
-        const q = searchQuery.trim();
-        if (!q) return;
+            alert(`Server Error: ${errorMsg}\n\nBackend: ${apiConfig.baseURL}`);
+        } finally {
+            setLoading(false);
+        }
+    };
         try {
             setLoading(true);
             const res = await axios.get('https://nominatim.openstreetmap.org/search', {

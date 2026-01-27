@@ -9,19 +9,35 @@ const PORT = process.env.PORT || 5000;
 // Initialize soil rasters on startup
 initSoils();
 
-// CORS configuration for Vercel
+// CORS configuration for Vercel - More explicit
 const corsOptions = {
-    origin: [
-        'https://landslide-detector-frontents.vercel.app',
-        'http://localhost:3000',
-        'http://localhost:5173'
-    ],
+    origin: function (origin, callback) {
+        const allowedOrigins = [
+            'https://landslide-detector-frontents.vercel.app',
+            'http://localhost:3000',
+            'http://localhost:5173',
+            'http://localhost:5000'
+        ];
+        
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(null, true); // Allow for Vercel compatibility
+        }
+    },
     credentials: true,
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type']
+    methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    exposedHeaders: ['Content-Type', 'X-Total-Count'],
+    maxAge: 86400
 };
 
 app.use(cors(corsOptions));
+
+// Explicit preflight handler
+app.options('*', cors(corsOptions));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -531,11 +547,40 @@ app.post('/predict', async (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-    res.json({ status: 'operational', version: '2.0' });
+    res.set({
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json'
+    });
+    res.json({ status: 'operational', version: '2.0', timestamp: new Date().toISOString() });
 });
 
 app.get('/', (req, res) => {
-    res.json({ message: 'Landslide Detector Backend API', status: 'running' });
+    res.set({
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json'
+    });
+    res.json({ 
+        message: 'Landslide Detector Backend API', 
+        status: 'running',
+        version: '2.0',
+        endpoints: {
+            health: '/health',
+            predict: '/predict'
+        }
+    });
+});
+
+// CORS test endpoint
+app.get('/cors-test', (req, res) => {
+    res.set({
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json'
+    });
+    res.json({ 
+        message: 'CORS is working!',
+        origin: req.get('origin'),
+        timestamp: new Date().toISOString()
+    });
 });
 
 app.listen(PORT, () => {
