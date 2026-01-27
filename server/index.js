@@ -5,11 +5,11 @@ const { initSoils, getSoilProperties, detectSoilType } = require('./soilRaster')
 
 const app = express();
 
-// Initialize soil rasters on startup (async, but non-blocking)
-let initPromise = Promise.resolve();
+// Initialize soil rasters in background (non-blocking)
+// App continues to work even if this fails
 if (process.env.NODE_ENV !== 'test') {
-    initPromise = initSoils().catch(err => {
-        console.error('⚠️ Soil initialization failed, will use defaults:', err.message);
+    initSoils().catch(err => {
+        console.warn('⚠️ Soil initialization failed, using defaults:', err.message);
     });
 }
 

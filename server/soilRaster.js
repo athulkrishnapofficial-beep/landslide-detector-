@@ -1,11 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 
+// GeoTIFF is optional - app works without it
 let GeoTIFF;
 try {
     GeoTIFF = require('geotiff');
 } catch (e) {
-    console.warn('⚠️ GeoTIFF library not available, using fallback mode');
     GeoTIFF = null;
 }
 
@@ -16,7 +16,8 @@ let soilDataCache = {
     loamy: null,
     sandy: null,
     metadata: null,
-    initialized: false
+    initialized: true, // Default to true - no blocking initialization
+    available: false // Whether TIFFs are actually loaded
 };
 
 // Default soil property mappings for different soil types
@@ -60,17 +61,19 @@ const SOIL_PROPERTIES = {
 };
 
 /**
- * Load all GeoTIFF files into memory
+ * Load all GeoTIFF files into memory (non-blocking, optional)
  */
 async function initSoils() {
-    try {
-        // Skip if GeoTIFF not available
-        if (!GeoTIFF) {
-            console.log('ℹ️ GeoTIFF library unavailable, skipping raster initialization');
-            soilDataCache.initialized = true;
-            return;
-        }
+    // Skip initialization - use defaults
+    // GeoTIFF files are optional for Vercel deployment
+    if (!GeoTIFF) {
+        console.log('ℹ️ GeoTIFF unavailable - using default soil parameters');
+        soilDataCache.initialized = true;
+        soilDataCache.available = false;
+        return;
+    }
 
+    try {
         const tifFiles = {
             clayey: path.join(__dirname, 'fclayey.tif'),
             clayskeletal: path.join(__dirname, 'fclayskeletal.tif'),
@@ -78,6 +81,7 @@ async function initSoils() {
             sandy: path.join(__dirname, 'fsandy.tif')
         };
 
+        let loadedCount = 0;
         // Load each GeoTIFF file
         for (const [soilType, filePath] of Object.entries(tifFiles)) {
             if (fs.existsSync(filePath)) {
@@ -89,28 +93,30 @@ async function initSoils() {
                     
                     soilDataCache[soilType] = {
                         image: image,
-                        data: data[0], // Get first band (typically the intensity/value)
+                        data: data[0],
                         width: image.getWidth(),
                         height: image.getHeight(),
                         bbox: image.getBoundingBox()
                     };
-                    
+                    loadedCount++;
                     console.log(`✓ Loaded ${soilType}.tif (${image.getWidth()}x${image.getHeight()})`);
                 } catch (err) {
                     console.warn(`⚠️ Failed to load ${soilType}.tif:`, err.message);
-                    soilDataCache[soilType] = null;
                 }
-            } else {
-                console.warn(`⚠️ ${soilType}.tif not found at ${filePath}`);
             }
         }
 
-        soilDataCache.initialized = true;
-        console.log('✅ Soil raster initialization complete');
+        if (loadedCount > 0) {
+            soilDataCache.available = true;
+            console.log(`✅ Loaded ${loadedCount}/4 soil rasters`);
+        } else {
+            console.log('⚠️ No soil rasters loaded, using defaults');
+        }
     } catch (error) {
-        console.error('❌ Error initializing soils:', error.message);
-        soilDataCache.initialized = true; // Mark as done even on error
+        console.warn('⚠️ Soil raster initialization skipped:', error.message);
     }
+    
+    soilDataCache.initialized = true;
 }
 
 /**
