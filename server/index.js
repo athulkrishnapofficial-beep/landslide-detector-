@@ -5,9 +5,12 @@ const { initSoils, getSoilProperties, detectSoilType } = require('./soilRaster')
 
 const app = express();
 
-// Initialize soil rasters on startup
+// Initialize soil rasters on startup (async, but non-blocking)
+let initPromise = Promise.resolve();
 if (process.env.NODE_ENV !== 'test') {
-    initSoils();
+    initPromise = initSoils().catch(err => {
+        console.error('⚠️ Soil initialization failed, will use defaults:', err.message);
+    });
 }
 
 // ===== CORS CONFIGURATION =====
@@ -27,6 +30,39 @@ app.options('*', cors());
 // Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+// ===== HEALTH CHECK - RESPONDS IMMEDIATELY =====
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'operational', 
+        version: '2.0', 
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV || 'unknown'
+    });
+});
+
+app.get('/', (req, res) => {
+    res.json({ 
+        message: 'Landslide Detector Backend API', 
+        status: 'running',
+        version: '2.0',
+        endpoints: {
+            health: '/health',
+            predict: '/predict',
+            corsTest: '/cors-test'
+        },
+        environment: process.env.NODE_ENV || 'unknown'
+    });
+});
+
+// CORS test endpoint
+app.get('/cors-test', (req, res) => {
+    res.json({ 
+        message: 'CORS is working!',
+        origin: req.get('origin') || 'no-origin',
+        timestamp: new Date().toISOString()
+    });
+});
 
 // ===== DEBUG MIDDLEWARE =====
 app.use((req, res, next) => {
@@ -540,40 +576,6 @@ app.post('/predict', async (req, res) => {
         console.error("❌ Analysis Failed:", error);
         res.status(500).json({ error: "Analysis failed", message: error.message });
     }
-});
-
-// ===== ENDPOINT DEFINITIONS =====
-
-app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'operational', 
-        version: '2.0', 
-        timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV || 'unknown'
-    });
-});
-
-app.get('/', (req, res) => {
-    res.json({ 
-        message: 'Landslide Detector Backend API', 
-        status: 'running',
-        version: '2.0',
-        endpoints: {
-            health: '/health',
-            predict: '/predict',
-            corsTest: '/cors-test'
-        },
-        environment: process.env.NODE_ENV || 'unknown'
-    });
-});
-
-// CORS test endpoint
-app.get('/cors-test', (req, res) => {
-    res.json({ 
-        message: 'CORS is working!',
-        origin: req.get('origin') || 'no-origin',
-        timestamp: new Date().toISOString()
-    });
 });
 
 // ===== EXPORTS & SERVER START =====

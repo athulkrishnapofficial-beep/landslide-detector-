@@ -1,6 +1,13 @@
 const fs = require('fs');
 const path = require('path');
-const GeoTIFF = require('geotiff');
+
+let GeoTIFF;
+try {
+    GeoTIFF = require('geotiff');
+} catch (e) {
+    console.warn('⚠️ GeoTIFF library not available, using fallback mode');
+    GeoTIFF = null;
+}
 
 // Cache for loaded GeoTIFF data
 let soilDataCache = {
@@ -8,7 +15,8 @@ let soilDataCache = {
     clayskeletal: null,
     loamy: null,
     sandy: null,
-    metadata: null
+    metadata: null,
+    initialized: false
 };
 
 // Default soil property mappings for different soil types
@@ -56,6 +64,13 @@ const SOIL_PROPERTIES = {
  */
 async function initSoils() {
     try {
+        // Skip if GeoTIFF not available
+        if (!GeoTIFF) {
+            console.log('ℹ️ GeoTIFF library unavailable, skipping raster initialization');
+            soilDataCache.initialized = true;
+            return;
+        }
+
         const tifFiles = {
             clayey: path.join(__dirname, 'fclayey.tif'),
             clayskeletal: path.join(__dirname, 'fclayskeletal.tif'),
@@ -90,19 +105,11 @@ async function initSoils() {
             }
         }
 
-        // Store metadata about TIF bounds
-        const clayeyData = soilDataCache.clayey;
-        if (clayeyData) {
-            soilDataCache.metadata = {
-                bounds: clayeyData.bbox,
-                width: clayeyData.width,
-                height: clayeyData.height
-            };
-        }
-
+        soilDataCache.initialized = true;
         console.log('✅ Soil raster initialization complete');
     } catch (error) {
-        console.error('❌ Error initializing soils:', error);
+        console.error('❌ Error initializing soils:', error.message);
+        soilDataCache.initialized = true; // Mark as done even on error
     }
 }
 
