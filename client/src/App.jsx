@@ -5,6 +5,7 @@ import axios from 'axios';
 import L from 'leaflet';
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
+import { apiConfig } from './config';
 
 let DefaultIcon = L.icon({ iconUrl: icon, shadowUrl: iconShadow, iconAnchor: [12, 41] });
 L.Marker.prototype.options.icon = DefaultIcon;
@@ -67,20 +68,22 @@ function App() {
         try {
             const rainToSend = (simMode && manualRainOverride !== null) ? manualRainOverride : (simMode ? rainValue : null);
 
-            const response = await axios.post('https://landslide-detector-backend.vercel.app/predict', {
-                lat: latlng.lat,
-                lng: latlng.lng,
-                manualRain: rainToSend,
-                depth: Number(depth) || 2.5
-            });
-            setResult(response.data);
-        } catch (error) {
-            console.error(error);
-            alert("Server Error. Make sure the backend is running!");
-        } finally {
-            setLoading(false);
-        }
-    };
+            const response = await axios.post(apiConfig.endpoints.predict, {
+                lat: latlng.lat,
+                lng: latlng.lng,
+                manualRain: rainToSend,
+                depth: Number(depth) || 2.5
+            }, {
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                timeout: 30000
+            });
+            setResult(response.data);
+        } catch (error) {
+            console.error('Prediction error:', error);
+            const errorMsg = error.response?.data?.message || error.message || 'Server Error';
+            alert(`Server Error: ${errorMsg}. Backend URL: ${apiConfig.endpoints.predict}`);
 
     // Manual location search using Nominatim
     const handleLocationSearch = async () => {

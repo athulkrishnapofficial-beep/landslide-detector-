@@ -4,13 +4,26 @@ const axios = require('axios');
 const { initSoils, getSoilProperties, detectSoilType } = require('./soilRaster');
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 // Initialize soil rasters on startup
 initSoils();
 
-app.use(cors());
+// CORS configuration for Vercel
+const corsOptions = {
+    origin: [
+        'https://landslide-detector-frontents.vercel.app',
+        'http://localhost:3000',
+        'http://localhost:5173'
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type']
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // --- 1. ENHANCED DATA FETCHING ---
 
@@ -521,8 +534,13 @@ app.get('/health', (req, res) => {
     res.json({ status: 'operational', version: '2.0' });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+app.get('/', (req, res) => {
+    res.json({ message: 'Landslide Detector Backend API', status: 'running' });
+});
+
+app.listen(PORT, () => {
     console.log(`✅ Enhanced Landslide Prediction Engine v2.0`);
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📡 Features: Climate Classification | USDA Soil Texture | Advanced Physics`);
+    console.log(`🔗 CORS enabled for: https://landslide-detector-frontents.vercel.app`);
 });

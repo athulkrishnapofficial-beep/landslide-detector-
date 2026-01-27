@@ -1,6 +1,9 @@
 {
  "$schema": "https://openapi.vercel.sh/vercel.json",
  "version": 2,
+ "env": {
+    "PORT": "5000"
+ },
  "builds": [
    {
      "src": "index.js",
@@ -10,7 +13,7 @@
  "routes": [
    {
      "src": "/(.*)",
-     "dest": "/"
+     "dest": "index.js"
    }
  ]
 }
