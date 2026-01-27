@@ -1,686 +1,344 @@
+// server.js
 const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
-const {
-  initSoils,
-  getSoilProperties,
-  detectSoilType,
-} = require("./soilRaster");
+const { initSoils, getSoilProperties, detectSoilType } = require("./soilRaster");
 
 const app = express();
 
-// Initialize soil rasters in background (non-blocking)
-// App continues to work even if this fails
+// Init soil rasters (best-effort)
 if (process.env.NODE_ENV !== "test") {
   initSoils().catch((err) => {
     console.warn("⚠️ Soil initialization failed, using defaults:", err.message);
   });
 }
 
-// ===== CORS CONFIGURATION =====
-// Allow all origins for Vercel
-app.use(
-  cors({
-    origin: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "Accept",
-      "X-Requested-With",
-    ],
-    credentials: true,
-    maxAge: 86400,
-    optionsSuccessStatus: 200,
-  }),
-);
-
-// Explicit OPTIONS handler for preflight
-app.use(cors());
-
-// Middleware
+// CORS + middleware
+app.use(cors({ origin: true, methods: ["GET","POST","OPTIONS","PUT","DELETE"], credentials: true }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
-// ===== HEALTH CHECK - RESPONDS IMMEDIATELY =====
+// Health & meta
 app.get("/health", (req, res) => {
-  res.json({
-    status: "operational",
-    version: "2.0",
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || "unknown",
-  });
+  res.json({ status: "operational", version: "2.0", timestamp: new Date().toISOString(), environment: process.env.NODE_ENV || "unknown" });
 });
-
 app.get("/", (req, res) => {
-  res.json({
-    message: "Landslide Detector Backend API",
-    status: "running",
-    version: "2.0",
-    endpoints: {
-      health: "/health",
-      predict: "/predict",
-      corsTest: "/cors-test",
-    },
-    environment: process.env.NODE_ENV || "unknown",
-  });
+  res.json({ message: "Landslide Detector Backend API", status: "running", version: "2.0", environment: process.env.NODE_ENV || "unknown" });
 });
 
-// CORS test endpoint
-app.get("/cors-test", (req, res) => {
-  res.json({
-    message: "CORS is working!",
-    origin: req.get("origin") || "no-origin",
-    timestamp: new Date().toISOString(),
-  });
-});
+/* -------------------------------
+   Helpers: external data fetches
+   ------------------------------- */
 
-// ===== DEBUG MIDDLEWARE =====
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-  if (req.method === "OPTIONS") {
-    console.log("  ↳ Preflight request detected");
-  }
-  next();
-});
-
-// --- 1. ENHANCED DATA FETCHING ---
-
+// Weather: open-meteo (current + daily precipitation for antecedent)
 const fetchWeather = async (lat, lon) => {
   try {
-    // Fetch current + 7-day forecast for rainfall history
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,precipitation,weather_code,wind_speed_10m&daily=precipitation_sum,temperature_2m_max,temperature_2m_min&past_days=7&forecast_days=1`;
-    const response = await axios.get(url);
-    const current = response.data.current;
-    const daily = response.data.daily;
-
-    // Calculate 7-day cumulative rainfall
-    const rainfall_7day = daily.precipitation_sum
-      .slice(0, 7)
-      .reduce((a, b) => a + (b || 0), 0);
-
+    const response = await axios.get(url, { timeout: 7000 });
+    const current = response.data.current || {};
+    const daily = response.data.daily || {};
+    const rainfall_7day = (daily.precipitation_sum || []).slice(0,7).reduce((a,b) => a + (b||0), 0);
     return {
-      temp: current.temperature_2m,
-      temp_max: daily.temperature_2m_max[0],
-      temp_min: daily.temperature_2m_min[0],
-      humidity: current.relative_humidity_2m,
-      rain_current: current.precipitation,
+      temp: current.temperature_2m ?? null,
+      temp_max: (daily.temperature_2m_max || [null])[0],
+      temp_min: (daily.temperature_2m_min || [null])[0],
+      humidity: current.relative_humidity_2m ?? null,
+      rain_current: current.precipitation ?? 0,
       rain_7day: rainfall_7day,
-      wind_speed: current.wind_speed_10m,
-      code: current.weather_code,
+      wind_speed: current.wind_speed_10m ?? null,
+      code: current.weather_code ?? null
     };
   } catch (e) {
-    console.error("⚠️ Weather API Error:", e.message);
-    return {
-      temp: 15,
-      temp_max: 20,
-      temp_min: 10,
-      humidity: 50,
-      rain_current: 0,
-      rain_7day: 0,
-      wind_speed: 0,
-      code: 0,
-    };
+    console.warn("Weather fetch failed:", e.message);
+    return { temp: null, temp_max: null, temp_min: null, humidity: null, rain_current: 0, rain_7day: 0, wind_speed: null, code: null };
   }
 };
 
+// Soil: from GeoTIFF raster via soilRaster.getSoilProperties (fallbacks handled there)
 const fetchSoil = async (lat, lon, depth = 2.5) => {
   try {
-    // Use GeoTIFF raster-based soil properties
-    const soilProps = getSoilProperties(lat, lon, depth);
-
+    const soilProps = getSoilProperties(lat, lon, depth); // may throw or return fallback
     return {
-      bulk_density: (soilProps.gamma / 9.81) * 100,
-      clay: soilProps.clay,
-      sand: soilProps.sand,
-      silt: soilProps.silt,
-      ph: 7.0,
-      organic_carbon: 1.5,
-      isWater: false,
-      raw: true,
-      soilType: soilProps.soilType,
-      cohesion: soilProps.c,
-      friction_angle: soilProps.phi,
-      permeability: soilProps.permeability,
+      bulk_density: soilProps.bulk_density ?? soilProps.gamma ?? 16, // best-effort
+      clay: soilProps.clay ?? 30,
+      sand: soilProps.sand ?? 35,
+      silt: soilProps.silt ?? 35,
+      organic_carbon: soilProps.organic_carbon ?? 1.5,
+      ph: soilProps.ph ?? 6.5,
+      soilType: soilProps.soilType ?? (detectSoilType ? detectSoilType(soilProps) : "Loam"),
+      cohesion: soilProps.c ?? null,
+      friction_angle: soilProps.phi ?? null,
+      permeability: soilProps.permeability ?? null,
+      raw: !!soilProps.raw
     };
   } catch (e) {
-    console.error("⚠️ GeoTIFF Raster Read Error (Using fallback):", e.message);
-
-    // Fallback to location-based defaults
-    const absLat = Math.abs(lat);
-    const noise = Math.abs(lat * lon) % 13;
-
-    let clay, sand, silt;
-    if (absLat > 60) {
-      clay = 15 + noise;
-      sand = 55 + noise;
-      silt = 30 - noise;
-    } else if (absLat < 23) {
-      clay = 40 + noise;
-      sand = 25 + noise;
-      silt = 35 - noise;
-    } else {
-      clay = 30 + noise;
-      sand = 35 + noise;
-      silt = 35 - noise;
-    }
-
+    console.warn("Soil fetch failed, using inferred defaults:", e.message);
+    // sensible tropical defaults
     return {
-      bulk_density: 140 + noise,
-      clay,
-      sand,
-      silt,
+      bulk_density: 16, // kN/m3 typical
+      clay: 35,
+      sand: 30,
+      silt: 35,
+      organic_carbon: 1.5,
       ph: 6.5,
-      organic_carbon: 2,
-      isWater: false,
-      raw: false,
-      soilType: "loamy",
-      cohesion: 20,
-      friction_angle: 28,
-      permeability: 5.0,
+      soilType: "Loam",
+      cohesion: null,
+      friction_angle: null,
+      permeability: null,
+      raw: false
     };
   }
 };
 
+// Simple DEM-derived slope using open-meteo elevation endpoint (coarse but OK for point-based app)
 const calculateSlope = async (lat, lon) => {
   try {
-    const offset = 0.003;
+    const offset = 0.003; // ~300m sampling
     const url = `https://api.open-meteo.com/v1/elevation?latitude=${lat},${lat + offset},${lat - offset},${lat}&longitude=${lon},${lon},${lon},${lon + offset}`;
-    const response = await axios.get(url);
-    const elevations = response.data.elevation;
-
-    const h0 = elevations[0];
-    const hNorth = elevations[1];
-    const hSouth = elevations[2];
-    const hEast = elevations[3];
-
-    // Ocean detection baseline
-    if (h0 === 0 && hNorth === 0 && hEast === 0) {
-      return { elevation: 0, slope: 0, aspect: 0 };
-    }
-
-    const dist = 333; // ~333m for 0.003 degrees
-    const dz_dx = (hEast - h0) / dist;
-    const dz_dy = (hNorth - hSouth) / (2 * dist);
-    const rise = Math.sqrt(dz_dx * dz_dx + dz_dy * dz_dy);
+    const response = await axios.get(url, { timeout: 7000 });
+    const elev = response.data.elevation || [];
+    if (!Array.isArray(elev) || elev.length < 4) return { elevation: 0, slope: 0, aspect: 0 };
+    const h0 = elev[0], hN = elev[1], hS = elev[2], hE = elev[3];
+    const dist = 333; // approximate meters for offset
+    const dz_dx = (hE - h0) / dist;
+    const dz_dy = (hN - hS) / (2 * dist);
+    const rise = Math.sqrt(dz_dx*dz_dx + dz_dy*dz_dy);
     const slopeDeg = Math.atan(rise) * (180 / Math.PI);
-
-    // Calculate aspect (direction of slope)
     const aspect = Math.atan2(dz_dx, dz_dy) * (180 / Math.PI);
-
-    return {
-      elevation: h0,
-      slope: parseFloat(slopeDeg.toFixed(2)),
-      aspect: parseFloat(aspect.toFixed(0)),
-    };
+    return { elevation: h0 ?? 0, slope: parseFloat(slopeDeg.toFixed(2)), aspect: Number.isFinite(aspect) ? Math.round(aspect) : 0 };
   } catch (e) {
-    console.error("⚠️ Elevation API Error:", e.message);
+    console.warn("Elevation fetch failed:", e.message);
     return { elevation: 0, slope: 0, aspect: 0 };
   }
 };
 
-// --- 2. CLIMATE CLASSIFICATION ---
-
-const getKoppenClimate = (lat, temp, temp_max, temp_min, rain_7day) => {
-  const absLat = Math.abs(lat);
-  const avgTemp = (temp_max + temp_min) / 2;
-
-  // Simplified Köppen classification
-  if (absLat > 66) {
-    return {
-      zone: "Polar (ET/EF)",
-      vegetation: "minimal",
-      permafrost: temp < 0,
-    };
-  } else if (absLat > 60) {
-    return {
-      zone: "Subarctic (Dfc/Dfd)",
-      vegetation: "sparse",
-      permafrost: temp < -5,
-    };
-  } else if (avgTemp < 0) {
-    return { zone: "Cold (Df/Dw)", vegetation: "moderate", permafrost: false };
-  } else if (avgTemp > 18 && rain_7day > 50) {
-    return { zone: "Tropical (Af/Am)", vegetation: "dense", permafrost: false };
-  } else if (avgTemp > 18) {
-    return {
-      zone: "Arid/Semi-arid (BWh/BSh)",
-      vegetation: "sparse",
-      permafrost: false,
-    };
-  } else if (temp_max > 22) {
-    return {
-      zone: "Temperate (Cfa/Cfb)",
-      vegetation: "moderate",
-      permafrost: false,
-    };
-  } else {
-    return {
-      zone: "Continental (Dfa/Dfb)",
-      vegetation: "moderate",
-      permafrost: false,
-    };
-  }
-};
-
-// --- 3. SOIL TEXTURE CLASSIFICATION (USDA) ---
-
+/* -------------------------------
+   Soil texture classifier (USDA-like)
+   ------------------------------- */
 const classifySoilTexture = (clay, sand, silt) => {
-  if (clay < 0 || sand < 0 || silt < 0) {
-    throw new Error("Inputs cannot be negative");
-  }
-
-  const sum = clay + sand + silt;
+  const sum = (clay||0) + (sand||0) + (silt||0);
   if (sum === 0) return "Unknown";
-
   const nClay = (clay / sum) * 100;
   const nSand = (sand / sum) * 100;
   const nSilt = (silt / sum) * 100;
-
   if (nClay >= 40) {
     if (nSilt >= 40) return "Silty Clay";
     if (nSand <= 45) return "Clay";
     return "Silty Clay";
   }
-
-  if (nClay >= 35 && nSand >= 45) {
-    return "Sandy Clay";
-  }
-
+  if (nClay >= 35 && nSand >= 45) return "Sandy Clay";
   if (nClay >= 27) {
     if (nSand <= 20) return "Silty Clay Loam";
     if (nSand <= 45) return "Clay Loam";
     return "Sandy Clay Loam";
   }
-
   if (nClay >= 20) {
     if (nSilt < 28 && nSand > 45) return "Sandy Clay Loam";
     if (nSilt >= 50) return "Silt Loam";
     return "Loam";
   }
-
-  if (nSilt >= 80 && nClay < 12) {
-    return "Silt";
-  }
-
-  if (nSilt >= 50) {
-    return "Silt Loam";
-  }
-
-  if (nSilt + 1.5 * nClay < 15) {
-    return "Sand";
-  }
-
-  if (nSilt + 2 * nClay < 30) {
-    return "Loamy Sand";
-  }
-
-  if (nSand > 52 || (nClay < 7 && nSilt < 50)) {
-    return "Sandy Loam";
-  }
-
+  if (nSilt >= 80 && nClay < 12) return "Silt";
+  if (nSilt >= 50) return "Silt Loam";
+  if ((nSilt + 1.5 * nClay) < 15) return "Sand";
+  if ((nSilt + 2 * nClay) < 30) return "Loamy Sand";
+  if (nSand > 52 || (nClay < 7 && nSilt < 50)) return "Sandy Loam";
   return "Loam";
 };
 
-// --- 4. ENHANCED RISK CALCULATION ---
+/* -------------------------------
+   Climate quick classifier (simple)
+   ------------------------------- */
+const getKoppenClimate = (lat, temp, temp_max, temp_min, rain_7day) => {
+  const absLat = Math.abs(lat);
+  const avgTemp = ( (temp_max || temp || 20) + (temp_min || temp || 10) ) / 2;
+  if (absLat > 66) return { zone: "Polar", vegetation: "minimal", permafrost: temp < 0 };
+  if (avgTemp > 18 && (rain_7day || 0) > 50) return { zone: "Tropical", vegetation: "dense", permafrost: false };
+  if (avgTemp > 18) return { zone: "Warm", vegetation: "sparse", permafrost: false };
+  return { zone: "Temperate", vegetation: "moderate", permafrost: false };
+};
 
+/* -------------------------------
+   MAIN: Hybrid Landslide Risk (GSI-style LSI + optional FoS)
+   ------------------------------- */
 function calculateLandslideRisk(features) {
-    const {
-        slope,
-        elevation,
-        rain_7day,
-        clay,
-        sand,
-        soilType,
-        depth
-    } = features;
+  // features: slope, elevation, rain_7day, rain_current, clay, sand, silt, soilType, cohesion, friction_angle, bulk_density, depth, climate (optional)
+  const slope = Number.isFinite(features.slope) ? features.slope : 0;
+  const rain7 = Number.isFinite(features.rain_7day) ? features.rain_7day : 0;
+  const clay = Number.isFinite(features.clay) ? features.clay : (features.soil ? features.soil.clay : 30);
+  const sand = Number.isFinite(features.sand) ? features.sand : (features.soil ? features.soil.sand : 35);
+  const silt = Number.isFinite(features.silt) ? features.silt : Math.max(0, 100 - clay - sand);
+  const depth = Number.isFinite(features.depth) ? features.depth : 2.5;
+  const soilType = features.soilType || classifySoilTexture(clay, sand, silt);
 
-    /* -------------------------------
-       1. FACTOR RATINGS (GSI STYLE)
-       ------------------------------- */
+  // 1) Factor scores (GSI-inspired bins)
+  let slopeScore = 1;
+  if (slope < 10) slopeScore = 1;
+  else if (slope < 20) slopeScore = 2;
+  else if (slope < 30) slopeScore = 3;
+  else if (slope < 40) slopeScore = 4;
+  else slopeScore = 5;
 
-    // SLOPE (MOST IMPORTANT FACTOR)
-    let slopeScore = 0;
-    if (slope < 10) slopeScore = 1;
-    else if (slope < 20) slopeScore = 2;
-    else if (slope < 30) slopeScore = 3;
-    else if (slope < 40) slopeScore = 4;
-    else slopeScore = 5;
+  let rainScore = 1;
+  if (rain7 < 50) rainScore = 1;
+  else if (rain7 < 100) rainScore = 2;
+  else if (rain7 < 150) rainScore = 3;
+  else if (rain7 < 250) rainScore = 4;
+  else rainScore = 5;
 
-    // RAINFALL (ANTECEDENT, NOT INTENSITY)
-    let rainScore = 0;
-    if (rain_7day < 50) rainScore = 1;
-    else if (rain_7day < 100) rainScore = 2;
-    else if (rain_7day < 150) rainScore = 3;
-    else if (rain_7day < 250) rainScore = 4;
-    else rainScore = 5;
+  let soilScore = 3;
+  if (/Clay/i.test(soilType)) soilScore = 5;
+  else if (/Silt/i.test(soilType)) soilScore = 4;
+  else if (/Loam/i.test(soilType)) soilScore = 3;
+  else if (/Sand/i.test(soilType)) soilScore = 2;
 
-    // SOIL / REGOLITH
-    let soilScore = 0;
-    if (soilType.includes("Clay")) soilScore = 5;
-    else if (soilType.includes("Silt")) soilScore = 4;
-    else if (soilType.includes("Loam")) soilScore = 3;
-    else if (soilType.includes("Sand")) soilScore = 2;
-    else soilScore = 3;
+  let depthScore = 1;
+  if (depth < 1) depthScore = 1;
+  else if (depth < 3) depthScore = 2;
+  else if (depth < 5) depthScore = 3;
+  else if (depth < 10) depthScore = 4;
+  else depthScore = 5;
 
-    // WEATHERED DEPTH (FAILURE PLANE PROXY)
-    let depthScore = 0;
-    if (depth < 1) depthScore = 1;
-    else if (depth < 3) depthScore = 2;
-    else if (depth < 5) depthScore = 3;
-    else if (depth < 10) depthScore = 4;
-    else depthScore = 5;
+  // 2) Weighted overlay (AHP-like weights - can be tuned regionally)
+  const WEIGHTS = { slope: 0.40, rainfall: 0.30, soil: 0.20, depth: 0.10 };
+  const LSI = slopeScore * WEIGHTS.slope + rainScore * WEIGHTS.rainfall + soilScore * WEIGHTS.soil + depthScore * WEIGHTS.depth;
 
-    /* -------------------------------
-       2. WEIGHTED OVERLAY (AHP-LIKE)
-       ------------------------------- */
-
-    const WEIGHTS = {
-        slope: 0.40,
-        rainfall: 0.30,
-        soil: 0.20,
-        depth: 0.10
-    };
-
-    const LSI =
-        slopeScore * WEIGHTS.slope +
-        rainScore * WEIGHTS.rainfall +
-        soilScore * WEIGHTS.soil +
-        depthScore * WEIGHTS.depth;
-
-    /* -------------------------------
-       3. SUSCEPTIBILITY CLASS
-       ------------------------------- */
-
-    let level = "Low";
-    if (LSI < 1.8) level = "Very Low";
-    else if (LSI < 2.6) level = "Low";
-    else if (LSI < 3.4) level = "Moderate";
-    else if (LSI < 4.2) level = "High";
-    else level = "Very High";
-
-    /* -------------------------------
-       4. OPTIONAL FoS (SECONDARY)
-       ------------------------------- */
-
-    let FoS = 3.0;
-    if (level === "Very High") FoS = 0.9;
-    else if (level === "High") FoS = 1.2;
-    else if (level === "Moderate") FoS = 1.6;
-    else FoS = 2.5;
-
-    /* -------------------------------
-       5. OUTPUT (HONEST & DEFENSIBLE)
-       ------------------------------- */
-
-    return {
-        level,
-        susceptibility_index: Number(LSI.toFixed(2)),
-        environment: "Hill Slope Terrain",
-        soil_type: soilType,
-        reason: `
-Slope class score: ${slopeScore},
-Rainfall class score: ${rainScore},
-Soil class score: ${soilScore},
-Depth class score: ${depthScore}
-→ Weighted Landslide Susceptibility Index = ${LSI.toFixed(2)}
-`.trim(),
-        details: {
-            FoS,
-            note: "FoS is indicative only. Primary result is susceptibility class.",
-            depth
-        }
-    };
-}
-
-
-  // --- STEP 2: SOIL CLASSIFICATION ---
-
-  const soilTexture = classifySoilTexture(clay, sand, silt);
-
-  // --- STEP 3: ADVANCED GEOTECHNICAL PARAMETERS ---
-
-  const fClay = clay / 100;
-  const fSand = sand / 100;
-  const fSilt = silt / 100;
-
-  let c_base = fClay * 45 + fSilt * 12 + fSand * 0.5;
-  let c_organic = Math.min(organic_carbon * 2, 10);
-  let c_dry = c_base + c_organic;
-
-  const saturation = Math.min(rain_7day / 100, 1.0);
-  let c = c_dry * (1 - saturation * fClay * 0.4);
-
-  let phi_base = fSand * 38 + fSilt * 32 + fClay * 18;
-  let phi = phi_base + (bulk_density / 1000) * 5;
-
-  if (!Number.isFinite(phi)) {
-    phi = 30;
-  }
-
-  let root_cohesion = 0;
-  if (climate.vegetation === "dense") root_cohesion = 15;
-  else if (climate.vegetation === "moderate") root_cohesion = 8;
-  else if (climate.vegetation === "sparse") root_cohesion = 3;
-
-  c += root_cohesion;
-
-  const rainfall_intensity = rain_current * 10;
-  const antecedent_moisture = Math.min(rain_7day / 150, 1.0);
-
-  let infiltration_rate = fSand * 30 + fSilt * 10 + fClay * 2;
-  const excess_rain = Math.max(0, rainfall_intensity - infiltration_rate);
-
-  const gamma = (bulk_density / 100) * 9.81;
-  const beta = slope * (Math.PI / 180);
-
-  const sigma = gamma * z * Math.pow(Math.cos(beta), 2);
-  const tau_driving = gamma * z * Math.sin(beta) * Math.cos(beta);
-
-  let u = 0;
-  const base_saturation = antecedent_moisture * 0.5;
-  const intensity_factor = Math.min(excess_rain / 20, 0.5);
-  const clay_retention = fClay * 0.3;
-
-  u = sigma * (base_saturation + intensity_factor + clay_retention);
-  u = Math.min(u, sigma * 0.9);
-  if (!Number.isFinite(u)) u = 0;
-
-  const sigma_effective = Math.max(0, sigma - u);
-  const tanPhi = Math.tan(phi * (Math.PI / 180));
-  const tau_resisting = c + sigma_effective * tanPhi;
-
-  let FoS = tau_resisting / (tau_driving + 0.01);
-  if (!Number.isFinite(FoS)) FoS = 15;
-
-  let probability = 0;
-
-  if (slope < 5) {
-    FoS = 15.0;
-    probability = 0.0;
-  } else if (slope < 15) {
-    if (FoS < 1.0) probability = 0.6;
-    else if (FoS < 1.5) probability = 0.25;
-    else probability = 0.05;
-  } else if (slope < 30) {
-    if (FoS < 1.0) probability = 0.9;
-    else if (FoS < 1.3) probability = 0.7;
-    else if (FoS < 1.7) probability = 0.35;
-    else probability = 0.1;
-  } else {
-    if (FoS < 1.0) probability = 0.98;
-    else if (FoS < 1.2) probability = 0.85;
-    else if (FoS < 1.5) probability = 0.55;
-    else probability = 0.2;
-  }
-
-  if (rainfall_intensity > 30) probability = Math.min(probability * 1.4, 0.99);
-  if (rain_7day > 150) probability = Math.min(probability * 1.3, 0.99);
-
+  // 3) Convert to susceptibility class
   let level = "Low";
-  if (probability > 0.75) level = "Extreme";
-  else if (probability > 0.5) level = "High";
-  else if (probability > 0.25) level = "Medium";
+  if (LSI < 1.8) level = "Very Low";
+  else if (LSI < 2.6) level = "Low";
+  else if (LSI < 3.4) level = "Moderate";
+  else if (LSI < 4.2) level = "High";
+  else level = "Very High";
 
-  let factors = [];
-
-  if (slope > 45)
-    factors.push(
-      `⚠️ Very steep slope (${slope.toFixed(1)}°) - Highly unstable`,
-    );
-  else if (slope > 30)
-    factors.push(`Steep slope (${slope.toFixed(1)}°) increases risk`);
-  else if (slope < 8)
-    factors.push(`Gentle slope (${slope.toFixed(1)}°) - Stable terrain`);
-  else factors.push(`Moderate slope (${slope.toFixed(1)}°)`);
-
-  factors.push(
-    `Soil: ${soilTexture} (${clay.toFixed(0)}% clay, ${sand.toFixed(0)}% sand)`,
-  );
-
-  if (soilTexture.includes("Clay") && rain_7day > 50) {
-    factors.push(`Clay soil retains water - Reduced friction`);
-  } else if (soilTexture.includes("Sand") && rain_7day > 100) {
-    factors.push(`Sandy soil drains quickly but lacks cohesion`);
+  // 4) Optional, simplified FoS (infinite-slope style) - only if we have reasonable soil strength values
+  let FoS = null;
+  let FoS_note = "Not computed (insufficient geotechnical inputs)";
+  try {
+    // need some values: cohesion (c), friction angle (phi), bulk_density (gamma)
+    const hasC = Number.isFinite(features.cohesion);
+    const hasPhi = Number.isFinite(features.friction_angle);
+    const hasGamma = Number.isFinite(features.bulk_density);
+    // adopt safe default estimates (indicative only)
+    const c = hasC ? features.cohesion : ( /Clay/i.test(soilType) ? 20 : /Loam|Silt/i.test(soilType) ? 10 : 5 );
+    const phi = hasPhi ? features.friction_angle : ( /Sand/i.test(soilType) ? 30 : /Clay/i.test(soilType) ? 20 : 26 );
+    // bulk density in kN/m3 if available else fallback 18 kN/m3
+    let gamma_kN = hasGamma ? Number(features.bulk_density) : 18; // typical 16-20 kN/m3
+    // Convert to consistent units: use kN/m3 for gamma, depth in m
+    const beta = slope * (Math.PI / 180);
+    // pore-pressure proxy: antecedent saturation from rain7 (0..1)
+    const saturation = Math.min(rain7 / 200, 1.0);
+    const u = gamma_kN * depth * saturation * 0.4; // very approximate pore-pressure (kN/m2)
+    // normal effective stress approx:
+    const sigma = gamma_kN * depth * Math.pow(Math.cos(beta), 2);
+    const sigma_eff = Math.max(0.0, sigma - u);
+    const tanPhi = Math.tan(phi * Math.PI / 180);
+    const tau_resist = c + sigma_eff * tanPhi;
+    const tau_drive = gamma_kN * depth * Math.sin(beta) * Math.cos(beta);
+    if (tau_drive <= 0) {
+      FoS = 999; // flat surface
+      FoS_note = "Flat or negligible driving stress";
+    } else {
+      FoS = tau_resist / (tau_drive + 1e-6);
+      FoS_note = "Indicative infinite-slope FoS (simplified)";
+    }
+    FoS = Number.isFinite(FoS) ? Number(FoS.toFixed(2)) : null;
+  } catch (err) {
+    FoS = null;
+    FoS_note = "FoS calculation failed";
   }
 
-  if (rainfall_intensity > 40) {
-    factors.push(
-      `🌧️ Extreme rainfall intensity (${rain_current.toFixed(1)} mm/hr)`,
-    );
-  } else if (rain_7day > 150) {
-    factors.push(
-      `💧 Prolonged rainfall (${rain_7day.toFixed(0)}mm over 7 days) - Saturated soil`,
-    );
-  } else if (rain_7day > 75) {
-    factors.push(`Moderate cumulative rainfall (${rain_7day.toFixed(0)}mm)`);
-  }
-
-  if (root_cohesion > 10) {
-    factors.push(
-      `🌳 Dense vegetation provides root reinforcement (+${root_cohesion.toFixed(0)} kPa)`,
-    );
-  }
-
-  if (FoS < 1.0) {
-    factors.push(
-      `❌ FAILURE IMMINENT (FoS: ${FoS.toFixed(2)}) - Slope cannot support itself`,
-    );
-  } else if (FoS < 1.3) {
-    factors.push(
-      `⚠️ Critical stability (FoS: ${FoS.toFixed(2)}) - High failure risk`,
-    );
-  } else if (FoS < 1.7) {
-    factors.push(
-      `⚡ Marginal stability (FoS: ${FoS.toFixed(2)}) - Vulnerable to triggers`,
-    );
-  } else {
-    factors.push(`✓ Stable conditions (FoS: ${FoS.toFixed(2)})`);
-  }
-
-  const reason = factors.join(" • ");
-
-  const sigmaSafe = sigma > 0 && Number.isFinite(sigma) ? sigma : 1;
-  const porePct = Number.isFinite(u / sigmaSafe) ? (u / sigmaSafe) * 100 : 0;
+  // 5) Short reason text (concise, useful for UI)
+  const reasons = [];
+  reasons.push(`Slope: ${slope.toFixed(1)}° (score ${slopeScore})`);
+  reasons.push(`7-day rain: ${rain7.toFixed(0)} mm (score ${rainScore})`);
+  reasons.push(`Soil: ${soilType} (score ${soilScore})`);
+  reasons.push(`Depth proxy: ${depth} m (score ${depthScore})`);
+  reasons.push(`LSI: ${LSI.toFixed(2)} → ${level}`);
 
   return {
     level,
-    reason,
-    environment: climate.zone,
-    soil_type: soilTexture,
+    susceptibility_index: Number(LSI.toFixed(2)),
+    soil_type: soilType,
+    reason: reasons.join(" • "),
     details: {
-      FoS: parseFloat(FoS.toFixed(2)),
-      probability: parseFloat((probability * 100).toFixed(1)),
-      cohesion: parseFloat(c.toFixed(1)),
-      friction_angle: Number.isFinite(phi) ? parseFloat(phi.toFixed(1)) : 30.0,
-      shear_strength: parseFloat(tau_resisting.toFixed(1)),
-      shear_stress: parseFloat(tau_driving.toFixed(1)),
-      pore_pressure: parseFloat(porePct.toFixed(0)),
-      saturation: parseFloat((antecedent_moisture * 100).toFixed(0)),
-      infiltration_rate: parseFloat(infiltration_rate.toFixed(1)),
-      root_cohesion: parseFloat(root_cohesion.toFixed(1)),
-      depth: parseFloat(z.toFixed(2)),
-    },
+      FoS,
+      FoS_note,
+      depth,
+      slope,
+      rain_7day: rain7,
+      clay, sand, silt
+    }
   };
-// --- 5. MAIN ROUTE ---
+}
 
+/* -------------------------------
+   Main /predict route
+   ------------------------------- */
 app.post("/predict", async (req, res) => {
-  const { lat, lng, manualRain, depth } = req.body;
-  console.log(
-    `\n📍 Analysis: ${lat}, ${lng} | Rain Override: ${manualRain ?? "Live"} | Depth: ${depth ?? "default"}`,
-  );
+  const { lat, lng, manualRain, depth } = req.body || {};
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: "lat and lng required (numeric)" });
+  }
 
+  const depthVal = Number.isFinite(depth) ? depth : 2.5;
   try {
-    const depthVal = depth ?? 2.5;
     const [weather, soil, topo] = await Promise.all([
       fetchWeather(lat, lng),
       fetchSoil(lat, lng, depthVal),
-      calculateSlope(lat, lng),
+      calculateSlope(lat, lng)
     ]);
 
-    let features = { ...weather, ...soil, ...topo, depth: depthVal };
-    let isSimulated = false;
-
-    if (manualRain !== null && manualRain !== undefined) {
-      features.rain_current = manualRain;
-      features.rain_7day = manualRain * 7;
-      isSimulated = true;
+    // Apply manual rain override if simulation mode
+    if (manualRain !== null && manualRain !== undefined && !Number.isNaN(Number(manualRain))) {
+      weather.rain_current = Number(manualRain);
+      weather.rain_7day = Number(manualRain) * 7;
     }
 
-    const climate = getKoppenClimate(
-      lat,
-      features.temp,
-      features.temp_max,
-      features.temp_min,
-      features.rain_7day,
-    );
+    const climate = getKoppenClimate(lat, weather.temp, weather.temp_max, weather.temp_min, weather.rain_7day);
 
-    const prediction = calculateLandslideRisk(features, climate);
+    // Compose features for risk function
+    const features = {
+      slope: topo.slope,
+      elevation: topo.elevation,
+      rain_current: weather.rain_current,
+      rain_7day: weather.rain_7day,
+      temp: weather.temp,
+      clay: soil.clay,
+      sand: soil.sand,
+      silt: soil.silt,
+      soilType: soil.soilType,
+      cohesion: soil.cohesion,
+      friction_angle: soil.friction_angle,
+      bulk_density: soil.bulk_density,
+      depth: depthVal,
+      climate
+    };
 
-    console.log(
-      `🌍 Climate: ${climate.zone} | Vegetation: ${climate.vegetation}`,
-    );
-    console.log(
-      `🏔️ Topography: ${features.elevation}m elevation, ${features.slope}° slope`,
-    );
-    console.log(
-      `🧪 Soil: ${prediction.soil_type} (Clay: ${features.clay?.toFixed?.(0) ?? "N/A"}%, Sand: ${features.sand?.toFixed?.(0) ?? "N/A"}%) | Source: ${features.soilType ?? "default"}`,
-    );
-    console.log(
-      `💧 Rainfall: Current ${features.rain_current}mm | 7-day: ${features.rain_7day.toFixed(0)}mm`,
-    );
-    console.log(
-      `📊 Result: ${prediction.level} Risk (FoS: ${prediction.details.FoS}, Probability: ${prediction.details.probability}%)`,
-    );
+    const prediction = calculateLandslideRisk(features);
 
-    res.json({
+    // Log concise info for debugging
+    console.log(`[PREDICT] ${lat},${lng} | slope=${topo.slope}° elev=${topo.elevation}m rain7=${weather.rain_7day}mm soil=${features.soilType} LSI=${prediction.susceptibility_index} level=${prediction.level}`);
+
+    // Return full structured response
+    return res.json({
       location: { lat, lng },
-      climate: climate,
-      data: features,
-      prediction: prediction,
-      isSimulated: isSimulated,
       timestamp: new Date().toISOString(),
+      climate,
+      data: { weather, soil: { ...soil }, topo },
+      prediction,
+      isSimulated: !!(manualRain !== null && manualRain !== undefined)
     });
-  } catch (error) {
-    console.error("❌ Analysis Failed:", error);
-    res.status(500).json({ error: "Analysis failed", message: error.message });
+  } catch (err) {
+    console.error("Predict failed:", err);
+    return res.status(500).json({ error: "Analysis failed", message: err.message });
   }
 });
 
-// ===== EXPORTS & SERVER START =====
-
-// Export app for Vercel serverless
+// Export & start (local)
 module.exports = app;
-
-// Listen only if running locally
-const PORT = process.env.PORT || 5000;
 if (process.env.NODE_ENV !== "production") {
+  const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => {
-    console.log(`✅ Enhanced Landslide Prediction Engine v2.0`);
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(
-      `📡 Features: Climate Classification | USDA Soil Texture | Advanced Physics`,
-    );
-    console.log(`🔗 CORS enabled for all origins`);
+    console.log(`✅ Landslide Prediction API running on port ${PORT}`);
   });
 }
