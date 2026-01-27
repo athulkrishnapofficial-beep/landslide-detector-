@@ -25,7 +25,7 @@ app.use(cors({
 }));
 
 // Explicit OPTIONS handler for preflight
-app.options('*', cors());
+app.use(cors());
 
 // Middleware
 app.use(express.json({ limit: '10mb' }));
