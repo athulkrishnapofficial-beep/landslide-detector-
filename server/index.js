@@ -1,9 +1,13 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const { initSoils, getSoilProperties, detectSoilType } = require('./soilRaster');
 
 const app = express();
 const PORT = 5000;
+
+// Initialize soil rasters on startup
+initSoils();
 
 app.use(cors());
 app.use(express.json());
@@ -37,70 +41,29 @@ const fetchWeather = async (lat, lon) => {
     }
 };
 
-const fetchSoil = async (lat, lon) => {
+const fetchSoil = async (lat, lon, depth = 2.5) => {
     try {
-        const url = `https://rest.isric.org/soilgrids/v2.0/properties/query?lat=${lat}&lon=${lon}&property=bdod&property=clay&property=sand&property=silt&property=phh2o&property=ocd&depth=0-5cm`;
+        // Use GeoTIFF raster-based soil properties
+        const soilProps = getSoilProperties(lat, lon, depth);
         
-        const response = await axios.get(url, { timeout: 8000 });
-        const layers = response.data.properties.layers;
-        
-        const getVal = (name) => {
-            const layer = layers.find(l => l.name === name);
-            if (!layer || !layer.depths || !layer.depths[0]) return null;
-            return layer.depths[0].values['mean'];
+        return {
+            bulk_density: soilProps.gamma / 9.81 * 100,
+            clay: soilProps.clay,
+            sand: soilProps.sand,
+            silt: soilProps.silt,
+            ph: 7.0,
+            organic_carbon: 1.5,
+            isWater: false,
+            raw: true,
+            soilType: soilProps.soilType,
+            cohesion: soilProps.c,
+            friction_angle: soilProps.phi,
+            permeability: soilProps.permeability
         };
-
-        let clay = getVal('clay');
-        let sand = getVal('sand');
-        let silt = getVal('silt');
-        let bulk_density = getVal('bdod');
-        let ph = getVal('phh2o');
-        let organic_carbon = getVal('ocd');
-
-        // FIX: If SoilGrids returns nulls, it is likely an URBAN area (concrete/roads), not necessarily water.
-        // We set isWater to FALSE and provide default "Urban Fill" soil parameters.
-        if (clay === null && sand === null && bulk_density === null) {
-            console.log("⚠️ Soil API returned nulls (Likely Urban/Impervious Surface) - Using defaults");
-            return { 
-                bulk_density: 150, // Urban soil is often compacted (1.5 g/cm3)
-                clay: 30,          // Default loam approximation
-                sand: 40, 
-                silt: 30, 
-                ph: 7.0, 
-                organic_carbon: 1, 
-                isWater: false,    // <--- CHANGED FROM true TO false
-                raw: false 
-            };
-        }
-        
-        // If at least one value exists, treat it as land
-        if (clay === null) clay = 0;
-        if (sand === null) sand = 0;
-        if (bulk_density === null) bulk_density = 140;
-
-        // Convert units: g/kg to %
-        clay = clay / 10;
-        sand = sand / 10;
-        silt = silt ? silt / 10 : (100 - clay - sand);
-        
-        // Normalize if total != 100
-        const total = clay + sand + silt;
-        if (total > 0) {
-            clay = (clay / total) * 100;
-            sand = (sand / total) * 100;
-            silt = (silt / total) * 100;
-        }
-
-        // pH is in pH*10, organic carbon is g/kg
-        ph = ph ? ph / 10 : 7;
-        organic_carbon = organic_carbon ? organic_carbon / 10 : 0;
-
-        return { bulk_density, clay, sand, silt, ph, organic_carbon, isWater: false, raw: true };
-
     } catch (e) {
-        console.error("⚠️ Soil API Failed (Using Location-based fallback):", e.message);
+        console.error("⚠️ GeoTIFF Raster Read Error (Using fallback):", e.message);
         
-        // Existing fallback logic...
+        // Fallback to location-based defaults
         const absLat = Math.abs(lat);
         const noise = (Math.abs(lat * lon) % 13);
         
@@ -119,7 +82,11 @@ const fetchSoil = async (lat, lon) => {
             ph: 6.5,
             organic_carbon: 2,
             isWater: false,
-            raw: false
+            raw: false,
+            soilType: 'loamy',
+            cohesion: 20,
+            friction_angle: 28,
+            permeability: 5.0
         }; 
     }
 };
@@ -503,13 +470,14 @@ app.post('/predict', async (req, res) => {
     console.log(`\n📍 Analysis: ${lat}, ${lng} | Rain Override: ${manualRain ?? 'Live'} | Depth: ${depth ?? 'default'}`);
 
     try {
+        const depthVal = depth ?? 2.5;
         const [weather, soil, topo] = await Promise.all([
             fetchWeather(lat, lng),
-            fetchSoil(lat, lng),
+            fetchSoil(lat, lng, depthVal),
             calculateSlope(lat, lng)
         ]);
 
-        let features = { ...weather, ...soil, ...topo, depth: depth ?? 2.5 };
+        let features = { ...weather, ...soil, ...topo, depth: depthVal };
         let isSimulated = false;
 
         if (manualRain !== null && manualRain !== undefined) {
@@ -530,7 +498,7 @@ app.post('/predict', async (req, res) => {
         
         console.log(`🌍 Climate: ${climate.zone} | Vegetation: ${climate.vegetation}`);
         console.log(`🏔️ Topography: ${features.elevation}m elevation, ${features.slope}° slope`);
-        console.log(`🧪 Soil: ${prediction.soil_type} (Clay: ${features.clay?.toFixed?.(0) ?? 'N/A'}%, Sand: ${features.sand?.toFixed?.(0) ?? 'N/A'}%)`);
+        console.log(`🧪 Soil: ${prediction.soil_type} (Clay: ${features.clay?.toFixed?.(0) ?? 'N/A'}%, Sand: ${features.sand?.toFixed?.(0) ?? 'N/A'}%) | Source: ${features.soilType ?? 'default'}`);
         console.log(`💧 Rainfall: Current ${features.rain_current}mm | 7-day: ${features.rain_7day.toFixed(0)}mm`);
         console.log(`📊 Result: ${prediction.level} Risk (FoS: ${prediction.details.FoS}, Probability: ${prediction.details.probability}%)`);
 
