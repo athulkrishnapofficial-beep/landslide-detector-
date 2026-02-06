@@ -2,9 +2,10 @@
 // Entry point for Vercel's serverless functions
 
 try {
-    const app = require('../index');
-    if (!app) {
-        throw new Error('App module is null or undefined');
+    const mainModule = require('../index');
+    const app = mainModule.app || mainModule;
+    if (!app || typeof app.get !== 'function') {
+        throw new Error('App is not a valid Express instance');
     }
     module.exports = app;
 } catch (error) {
