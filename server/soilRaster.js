@@ -1,238 +1,113 @@
-const fs = require('fs');
-const path = require('path');
+/**
+ * Soil Raster Module
+ * Provides soil properties for given coordinates using simple estimation
+ * Can be extended with GeoTIFF data in the future
+ */
 
-// GeoTIFF is optional - app works without it
-let GeoTIFF;
-try {
-    GeoTIFF = require('geotiff');
-} catch (e) {
-    GeoTIFF = null;
-}
-
-// Cache for loaded GeoTIFF data
-let soilDataCache = {
-    clayey: null,
-    clayskeletal: null,
-    loamy: null,
-    sandy: null,
-    metadata: null,
-    initialized: true, // Default to true - no blocking initialization
-    available: false // Whether TIFFs are actually loaded
-};
-
-// Default soil property mappings for different soil types
-const SOIL_PROPERTIES = {
-    clayey: {
-        clay: 55,
-        sand: 15,
-        silt: 30,
-        cohesion_kPa: 45,
-        friction_angle_deg: 18,
-        bulk_density: 150,
-        permeability: 0.1
-    },
-    clayskeletal: {
-        clay: 50,
-        sand: 20,
-        silt: 30,
-        cohesion_kPa: 35,
-        friction_angle_deg: 22,
-        bulk_density: 160,
-        permeability: 0.2
-    },
-    loamy: {
-        clay: 27,
-        sand: 40,
-        silt: 33,
-        cohesion_kPa: 20,
-        friction_angle_deg: 28,
-        bulk_density: 140,
-        permeability: 5.0
-    },
-    sandy: {
-        clay: 5,
-        sand: 85,
-        silt: 10,
-        cohesion_kPa: 0.5,
-        friction_angle_deg: 35,
-        bulk_density: 130,
-        permeability: 25.0
-    }
+// Initialize soil rasters (currently a no-op, can load GeoTIFF files here)
+const initSoils = async () => {
+  console.log("Initializing soil rasters...");
+  // Placeholder for future GeoTIFF loading
+  return Promise.resolve();
 };
 
 /**
- * Load all GeoTIFF files into memory (non-blocking, optional)
+ * Get soil properties for a given location
+ * @param {number} lat - Latitude
+ * @param {number} lon - Longitude
+ * @param {number} depth - Soil depth in cm (default: 2.5)
+ * @returns {object} Soil properties including clay, sand, silt, cohesion, friction angle, etc.
  */
-async function initSoils() {
-    // Skip initialization - use defaults
-    // GeoTIFF files are optional for Vercel deployment
-    if (!GeoTIFF) {
-        console.log('ℹ️ GeoTIFF unavailable - using default soil parameters');
-        soilDataCache.initialized = true;
-        soilDataCache.available = false;
-        return;
-    }
+const getSoilProperties = (lat, lon, depth = 2.5) => {
+  // Simple deterministic model based on coordinates
+  // In production, this would read from GeoTIFF rasters
+  
+  const absLat = Math.abs(lat);
+  const absLon = Math.abs(lon);
+  const noise = (absLat * absLon * 1000) % 20;
 
-    try {
-        const tifFiles = {
-            clayey: path.join(__dirname, 'fclayey.tif'),
-            clayskeletal: path.join(__dirname, 'fclayskeletal.tif'),
-            loamy: path.join(__dirname, 'floamy.tif'),
-            sandy: path.join(__dirname, 'fsandy.tif')
-        };
+  let clay, sand, silt, soilType;
+  let cohesion = 20;
+  let friction_angle = 28;
+  let permeability = 5.0;
+  let gamma = 17.5; // Unit weight in kN/m³
 
-        let loadedCount = 0;
-        // Load each GeoTIFF file
-        for (const [soilType, filePath] of Object.entries(tifFiles)) {
-            if (fs.existsSync(filePath)) {
-                try {
-                    const buffer = fs.readFileSync(filePath);
-                    const tiff = await GeoTIFF.fromArrayBuffer(buffer);
-                    const image = await tiff.getImage();
-                    const data = await image.readRasters();
-                    
-                    soilDataCache[soilType] = {
-                        image: image,
-                        data: data[0],
-                        width: image.getWidth(),
-                        height: image.getHeight(),
-                        bbox: image.getBoundingBox()
-                    };
-                    loadedCount++;
-                    console.log(`✓ Loaded ${soilType}.tif (${image.getWidth()}x${image.getHeight()})`);
-                } catch (err) {
-                    console.warn(`⚠️ Failed to load ${soilType}.tif:`, err.message);
-                }
-            }
-        }
+  // Zone-based soil properties
+  if (absLat > 60) {
+    // High latitude - glacial soils
+    clay = 15 + noise;
+    sand = 55 + noise;
+    silt = 30 - noise;
+    soilType = "sandy";
+    cohesion = 15;
+    friction_angle = 30;
+  } else if (absLat < 23) {
+    // Tropical - weathered soils
+    clay = 40 + noise;
+    sand = 25 + noise;
+    silt = 35 - noise;
+    soilType = "clayey";
+    cohesion = 25;
+    friction_angle = 26;
+    gamma = 18.5;
+  } else {
+    // Temperate zone
+    clay = 30 + noise;
+    sand = 35 + noise;
+    silt = 35 - noise;
+    soilType = "loamy";
+    cohesion = 20;
+    friction_angle = 28;
+  }
 
-        if (loadedCount > 0) {
-            soilDataCache.available = true;
-            console.log(`✅ Loaded ${loadedCount}/4 soil rasters`);
-        } else {
-            console.log('⚠️ No soil rasters loaded, using defaults');
-        }
-    } catch (error) {
-        console.warn('⚠️ Soil raster initialization skipped:', error.message);
-    }
-    
-    soilDataCache.initialized = true;
-}
+  // Adjust for depth
+  if (depth > 1) {
+    clay = Math.min(clay * 1.05, 60);
+    cohesion = Math.max(cohesion * 0.95, 10);
+  }
+
+  return {
+    clay: Math.max(0, Math.min(100, clay)),
+    sand: Math.max(0, Math.min(100, sand)),
+    silt: Math.max(0, Math.min(100, silt)),
+    soilType,
+    c: cohesion, // Cohesion in kPa
+    phi: friction_angle, // Friction angle in degrees
+    permeability, // in mm/h
+    gamma, // Unit weight in kN/m³
+  };
+};
 
 /**
- * Get pixel value from a GeoTIFF at given lat/lon
+ * Detect soil type from percentages
+ * @param {number} clay - Clay percentage
+ * @param {number} sand - Sand percentage
+ * @param {number} silt - Silt percentage
+ * @returns {string} Soil type classification
  */
-function getPixelValueAtLocation(tiffData, lat, lon) {
-    if (!tiffData || !tiffData.data) return null;
+const detectSoilType = (clay, sand, silt) => {
+  const total = clay + sand + silt;
+  const clayPct = (clay / total) * 100;
+  const sandPct = (sand / total) * 100;
+  const siltPct = (silt / total) * 100;
 
-    const [minX, minY, maxX, maxY] = tiffData.bbox;
-    
-    // Normalize lat/lon to pixel coordinates
-    const pixelX = Math.floor(((lon - minX) / (maxX - minX)) * tiffData.width);
-    const pixelY = Math.floor(((maxY - lat) / (maxY - minY)) * tiffData.height);
-
-    // Check bounds
-    if (pixelX < 0 || pixelX >= tiffData.width || pixelY < 0 || pixelY >= tiffData.height) {
-        return null;
-    }
-
-    const pixelIndex = pixelY * tiffData.width + pixelX;
-    return tiffData.data[pixelIndex];
-}
-
-/**
- * Detect soil type based on GeoTIFF values at location
- * Returns which TIF has the highest value (indicating presence of that soil type)
- */
-function detectSoilType(lat, lon) {
-    const values = {
-        clayey: 0,
-        clayskeletal: 0,
-        loamy: 0,
-        sandy: 0
-    };
-
-    // Get values from each soil type raster
-    for (const [soilType, tiffData] of Object.entries(soilDataCache)) {
-        if (soilType === 'metadata') continue;
-        
-        const value = getPixelValueAtLocation(tiffData, lat, lon);
-        if (value !== null && value !== undefined) {
-            values[soilType] = value;
-        }
-    }
-
-    // Find the soil type with the highest value (dominant soil class)
-    let dominantType = 'loamy'; // Default fallback
-    let maxValue = 0;
-
-    for (const [soilType, value] of Object.entries(values)) {
-        if (value > maxValue) {
-            maxValue = value;
-            dominantType = soilType;
-        }
-    }
-
-    console.log(`🧪 Detected soil type at (${lat.toFixed(3)}, ${lon.toFixed(3)}): ${dominantType} (value: ${maxValue})`);
-    return dominantType;
-}
-
-/**
- * Get soil properties from GeoTIFF-based classification
- * This replaces the CSV lookup with raster-based data
- */
-function getSoilPropertiesFromRaster(lat, lon, depth) {
-    // Detect dominant soil type at this location
-    const soilType = detectSoilType(lat, lon);
-    const baseProperties = SOIL_PROPERTIES[soilType] || SOIL_PROPERTIES.loamy;
-
-    // Depth adjustment: deeper soils tend to have slightly less cohesion
-    const depthFactor = Math.max(0.8, 1 - (depth / 20) * 0.2);
-    const adjustedCohesion = baseProperties.cohesion_kPa * depthFactor;
-
-    return {
-        soilType: soilType,
-        clay: baseProperties.clay,
-        sand: baseProperties.sand,
-        silt: baseProperties.silt,
-        c: adjustedCohesion,
-        phi: baseProperties.friction_angle_deg,
-        gamma: baseProperties.bulk_density,
-        permeability: baseProperties.permeability,
-        raw_data: baseProperties
-    };
-}
-
-/**
- * Get properties from either raster or default based on availability
- */
-function getSoilProperties(lat, lon, depth = 2.5) {
-    // Try raster-based approach first
-    const soilType = detectSoilType(lat, lon);
-    
-    if (soilType && SOIL_PROPERTIES[soilType]) {
-        return getSoilPropertiesFromRaster(lat, lon, depth);
-    }
-
-    // Fallback to defaults
-    console.warn(`⚠️ No raster data available, using defaults for location`);
-    return {
-        soilType: 'loamy',
-        clay: 27,
-        sand: 40,
-        silt: 33,
-        c: 20,
-        phi: 28,
-        gamma: 140,
-        permeability: 5.0,
-        raw_data: SOIL_PROPERTIES.loamy
-    };
-}
+  if (clayPct > 40) {
+    return "clay";
+  } else if (sandPct > 50) {
+    return "sand";
+  } else if (siltPct > 50) {
+    return "silt";
+  } else if (clayPct > 27 && sandPct > 20) {
+    return "clay-loam";
+  } else if (clayPct < 27 && sandPct > 50) {
+    return "sandy-loam";
+  } else {
+    return "loam";
+  }
+};
 
 module.exports = {
-    initSoils,
-    detectSoilType,
-    getSoilProperties,
-    getSoilPropertiesFromRaster,
-    SOIL_PROPERTIES
+  initSoils,
+  getSoilProperties,
+  detectSoilType,
 };
