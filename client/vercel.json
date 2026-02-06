@@ -6,9 +6,5 @@
              "source": "/(.*)", 
         "destination": "/" 
         }
-    ],
-    "env": {
-        "VITE_API_URL": "@api_url",
-        "VITE_FRONTEND_URL": "@frontend_url"
-    }
+    ]
 }
