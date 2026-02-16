@@ -139,11 +139,60 @@ const computeSoilStrength = (base, soil = { clay: 30, sand: 30, silt: 40 }, z = 
   };
 };
 
-/* ===================== SOIL COMPOSITION (REGIONAL PATTERNS) ===================== */
-const getSoilComposition = (lat, lon) => {
-  // Regional soil patterns for Kerala and surrounding areas based on geological data
-  const seed = Math.abs(lat * lon * 1000) % 100;
+/* ===================== SOIL COMPOSITION (SOILGRID API + REGIONAL FALLBACK) ===================== */
+/**
+ * Fetch soil composition from ISRIC SoilGrids API (real soil data)
+ * Falls back to regional patterns if API fails
+ */
+const getSoilComposition = async (lat, lon) => {
+  try {
+    // Query SoilGrids API for clay and sand content at 0-5cm depth
+    const url = `https://rest.isric.org/soilgrids/v2.0/properties/query?` +
+      `lat=${lat}&lon=${lon}&` +
+      `property=clay&property=sand&` +
+      `depth=0-5cm`;
 
+    const response = await axios.get(url, { timeout: 10000 });
+    const properties = response.data.properties || [];
+
+    let clay = null;
+    let sand = null;
+
+    // Extract clay and sand mean values from the response
+    for (const prop of properties) {
+      if (prop.name === 'clay') {
+        const depths = prop.depths || [];
+        if (depths.length > 0 && depths[0].values) {
+          clay = Number(depths[0].values.mean || 0) / 10; // Convert from g/kg to %
+        }
+      }
+      if (prop.name === 'sand') {
+        const depths = prop.depths || [];
+        if (depths.length > 0 && depths[0].values) {
+          sand = Number(depths[0].values.mean || 0) / 10; // Convert from g/kg to %
+        }
+      }
+    }
+
+    // If we got valid clay and sand values
+    if (clay !== null && sand !== null) {
+      clay = Math.min(100, Math.max(0, clay));
+      sand = Math.min(100, Math.max(0, sand));
+      const silt = Math.max(0, 100 - clay - sand);
+
+      return {
+        clay: Number(clay.toFixed(1)),
+        sand: Number(sand.toFixed(1)),
+        silt: Number(silt.toFixed(1)),
+        source: 'SoilGrids API'
+      };
+    }
+  } catch (err) {
+    // API failed, fall back to regional patterns
+  }
+
+  // ===== FALLBACK: Regional soil patterns =====
+  const seed = Math.abs(lat * lon * 1000) % 100;
   let clay, sand, silt;
 
   // Kerala Western Ghats (9-13°N, 73-78°E) - Lateritic soils, high clay
@@ -184,7 +233,8 @@ const getSoilComposition = (lat, lon) => {
   return {
     clay: Math.min(100, Math.max(0, clay)),
     sand: Math.min(100, Math.max(0, sand)),
-    silt: Math.min(100, Math.max(0, silt))
+    silt: Math.min(100, Math.max(0, silt)),
+    source: 'Regional Pattern (Fallback)'
   };
 };
 
@@ -366,9 +416,10 @@ app.post("/predict", async (req, res) => {
       return res.status(400).json({ error: "Invalid coordinates" });
     }
 
-    const [weatherOrig, topo] = await Promise.all([
+    const [weatherOrig, topo, soil] = await Promise.all([
       fetchWeather(lat, lng),
-      calculateSlope(lat, lng)
+      calculateSlope(lat, lng),
+      getSoilComposition(lat, lng)
     ]);
 
     // Allow manual rainfall override for simulation
@@ -432,8 +483,6 @@ app.post("/predict", async (req, res) => {
         timestamp: new Date().toISOString()
       });
     }
-
-    const soil = getSoilComposition(lat, lng);
 
     const features = {
       ...weather,
