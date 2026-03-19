@@ -260,7 +260,7 @@ function App() {
                             <input
                                 type="range"
                                 min="0.5"
-                                max="15"
+                                max="10"
                                 step="0.5"
                                 value={depth}
                                 onChange={(e) => setDepth(Number(e.target.value))}
@@ -270,7 +270,7 @@ function App() {
                             <input
                                 type="number"
                                 min="0.5"
-                                max="15"
+                                max="10"
                                 step="0.5"
                                 value={depth}
                                 onChange={(e) => setDepth(Number(e.target.value) || 2.5)}
