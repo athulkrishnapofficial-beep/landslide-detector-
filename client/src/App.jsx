@@ -28,7 +28,7 @@ function App() {
     const [simMode, setSimMode] = useState(false);
     const [rainValue, setRainValue] = useState(0);
     const [searchQuery, setSearchQuery] = useState('');
-    const [depth, setDepth] = useState(1.5); // failure depth in meters
+    const [depth, setDepth] = useState(2.5); // failure depth in meters
     const [cooldownRemaining, setCooldownRemaining] = useState(0); // 2-second cooldown timer
 
     const getFrictionDisplay = (res) => {
@@ -90,7 +90,7 @@ function App() {
                 lat: latlng.lat,
                 lng: latlng.lng,
                 manualRain: rainToSend,
-                depth: Number(depth) || 1.5
+                depth: Number(depth) || 2.5
             });
             setResult(response.data);
             // Start 2-second cooldown
@@ -273,7 +273,7 @@ function App() {
                                 max="10"
                                 step="0.5"
                                 value={depth}
-                                onChange={(e) => setDepth(Number(e.target.value) || 1.5)}
+                                onChange={(e) => setDepth(Number(e.target.value) || 2.5)}
                                 className="w-16 px-2 py-1 text-xs border rounded-lg border-slate-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:opacity-50"
                                 disabled={cooldownRemaining > 0}
                             />
