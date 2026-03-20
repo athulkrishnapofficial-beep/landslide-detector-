@@ -365,13 +365,13 @@ const calculateRisk = (f) => {
 
   const FoS = shear_strength / (tau + 0.01);
 
-  // Keep the original FoS for decision logic but cap the displayed value at 3
+  // Use computed FoS directly for both decision logic and display
   let risk = "Low";
   if (FoS < 1.0) risk = "Extreme";
   else if (FoS < 1.3) risk = "High";
   else if (FoS < 1.7) risk = "Medium";
 
-  const displayFoS = Math.min(FoS, 3);
+  const displayFoS = FoS;
 
   // Return both top-level metrics and a details object for compatibility
   const roundedPhi = Number((phi).toFixed(1));
