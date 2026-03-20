@@ -329,7 +329,7 @@ const calculateSlope = async (lat, lon) => {
 
 /* ===================== CORE PHYSICS ===================== */
 const calculateRisk = (f) => {
-  const z = Number(f.depth || 2.5);
+  const z = Number(f.depth || 1.5);
   const slopeDeg = Number(f.slope || 0);
   const beta = slopeDeg * Math.PI / 180;
 
@@ -410,7 +410,7 @@ app.post("/predict", async (req, res) => {
   try {
     const lat = Number(req.body.lat);
     const lng = Number(req.body.lng);
-    const depth = Number(req.body.depth || 2.5);
+    const depth = Number(req.body.depth || 1.5);
 
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return res.status(400).json({ error: "Invalid coordinates" });
