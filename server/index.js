@@ -452,7 +452,7 @@ app.post("/predict", async (req, res) => {
         depth: 0
       };
 
-      const maxFoS = 3.0; // maximum display FoS used elsewhere in the app
+      const maxFoS = 1000.0;
       const prediction = {
         risk_level: `N/A (${why})`,
         FoS: maxFoS,
@@ -492,14 +492,6 @@ app.post("/predict", async (req, res) => {
     };
 
     const prediction = calculateRisk(features);
-
-    // Ensure FoS is capped at 3.00 in both top-level and details for consistent UI display
-    if (prediction && typeof prediction.FoS === 'number') {
-      prediction.FoS = Number(Math.min(prediction.FoS, 3.0).toFixed(2));
-    }
-    if (prediction && prediction.details && typeof prediction.details.FoS === 'number') {
-      prediction.details.FoS = Number(Math.min(prediction.details.FoS, 3.0).toFixed(2));
-    }
 
     res.json({
       location: { lat, lng },
