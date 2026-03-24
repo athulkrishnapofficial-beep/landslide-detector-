@@ -65,10 +65,10 @@ const CLIMATE = {
 
 /* ===================== SOIL STRENGTH (PDF-INSPIRED) ===================== */
 const STRENGTH_TABLE = [
-  { min: 0, max: 1.5, c: 35, phi: 28, gamma: 9 },
-  { min: 1.5, max: 3.0, c: 32, phi: 30, gamma: 9 },
-  { min: 3.0, max: 5.0, c: 28, phi: 31, gamma: 9 },
-  { min: 5.0, max: 10.0, c: 25, phi: 32, gamma: 9 }
+  { min: 0, max: 1.5, c: 35, phi: 28, gamma: 15.5 },
+  { min: 1.5, max: 3.0, c: 32, phi: 30, gamma: 16.2 },
+  { min: 3.0, max: 5.0, c: 28, phi: 31, gamma: 16.8 },
+  { min: 5.0, max: 10.0, c: 25, phi: 32, gamma: 17.5 }
 ];
 
 const getStrengthFromDepth = (z) => {
