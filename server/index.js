@@ -192,7 +192,11 @@ const getSoilComposition = async (lat, lon) => {
   }
 
   // ===== FALLBACK: Regional soil patterns =====
-  const seed = Math.abs(lat * lon * 1000) % 100;
+  // Use integer arithmetic so the seed is deterministic for the same coordinates.
+  // 31 is a small prime used to combine intLat and intLon into a single hash value.
+  const intLat = Math.round(Math.abs(lat) * 10000);
+  const intLon = Math.round(Math.abs(lon) * 10000);
+  const seed = (intLat * 31 + intLon) % 100;
   let clay, sand, silt;
 
   // Kerala Western Ghats (9-13°N, 73-78°E) - Lateritic soils, high clay
