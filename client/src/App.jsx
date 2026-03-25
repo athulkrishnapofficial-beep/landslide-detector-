@@ -105,8 +105,8 @@ function App() {
     };
 
     const handleLocationSearch = async () => {
-        const q = searchQuery;
-        if (!q.trim()) {
+        const q = searchQuery.trim();
+        if (!q) {
             alert("Please enter a location to search.");
             return;
         }
@@ -116,6 +116,25 @@ function App() {
         }
         try {
             setLoading(true);
+
+            // If the input looks like a coordinate pair (e.g. "10.8505, 76.2711"),
+            // parse it directly so the same typed coordinates always resolve to the
+            // exact same lat/lng values without going through geocoding.
+            const coordMatch = q.match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+            if (coordMatch) {
+                const lat = parseFloat(coordMatch[1]);
+                const lng = parseFloat(coordMatch[2]);
+                if (
+                    Number.isFinite(lat) && Number.isFinite(lng) &&
+                    lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
+                ) {
+                    const latlng = { lat, lng };
+                    setMarker(latlng);
+                    predictRisk(latlng);
+                    return;
+                }
+            }
+
             const res = await axios.get('https://nominatim.openstreetmap.org/search', {
                 params: {
                     q,
