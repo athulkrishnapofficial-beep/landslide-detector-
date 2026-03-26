@@ -278,7 +278,7 @@ function App() {
                         <div className="flex items-center gap-2">
                             <input
                                 type="range"
-                                min="0.5"
+                                min="1"
                                 max="10"
                                 step="0.5"
                                 value={depth}
